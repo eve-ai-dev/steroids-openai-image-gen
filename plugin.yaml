@@ -1,0 +1,8 @@
+name: steroids-openai-image-gen
+version: "0.1.0"
+description: "Hermes image generation provider for OpenAI-compatible endpoints and direct Codex Auth, with edit/reference image and quality support."
+author: Alberto + Adan
+kind: backend
+provides_tools:
+  - image_generate
+provides_hooks: []
