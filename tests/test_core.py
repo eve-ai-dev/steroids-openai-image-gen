@@ -2,6 +2,9 @@ import base64
 import struct
 import zlib
 
+import pytest
+
+from steroids_openai_image_gen.background import BackgroundImageJobError, BackgroundImageJobRunner, normalize_jobs
 from steroids_openai_image_gen.codex_auth import extract_image_b64
 from steroids_openai_image_gen.config import SteroidsConfig
 from steroids_openai_image_gen.provider import _save_payload_image
@@ -46,3 +49,43 @@ def test_config_defaults():
     assert cfg.mode == 'openai-compatible'
     assert cfg.model == 'gpt-image-2'
     assert cfg.quality == 'medium'
+
+
+def test_normalize_jobs_caps_and_single_prompt():
+    jobs = normalize_jobs({'prompt': 'hello', 'aspect_ratio': 'square'})
+    assert len(jobs) == 1
+    assert jobs[0].prompt == 'hello'
+    assert jobs[0].aspect_ratio == 'square'
+
+
+def test_normalize_jobs_rejects_over_cap(monkeypatch):
+    monkeypatch.setenv('STEROIDS_IMAGE_BG_MAX_JOBS', '1')
+    with pytest.raises(BackgroundImageJobError):
+        normalize_jobs({'jobs': [{'prompt': 'a'}, {'prompt': 'b'}]})
+
+
+def test_background_runner_requires_session_key():
+    runner = BackgroundImageJobRunner()
+    with pytest.raises(BackgroundImageJobError):
+        runner.create_jobs({'prompt': 'x'}, origin_session_key='')
+
+
+def test_background_runner_create_jobs_writes_state(tmp_path, monkeypatch):
+    import steroids_openai_image_gen.background as bg
+
+    monkeypatch.setenv('HERMES_HOME', str(tmp_path))
+    monkeypatch.setenv('STEROIDS_IMAGE_BG_MAX_JOBS', '2')
+    monkeypatch.setenv('STEROIDS_IMAGE_BG_MAX_CONCURRENT', '1')
+    runner = BackgroundImageJobRunner()
+    result = runner.create_jobs({'prompt': 'x'}, origin_session_key='agent:main:discord:dm:1')
+    assert result['success'] is True
+    jobs_dir = tmp_path / 'steroids_openai_image_gen' / 'jobs'
+    assert jobs_dir.exists()
+    assert len(list(jobs_dir.iterdir())) == 1
+
+
+def test_current_session_key_parser():
+    from steroids_openai_image_gen.background import _parse_session_key
+    assert _parse_session_key('agent:main:discord:dm:123') == {'platform': 'discord', 'chat_type': 'dm', 'chat_id': '123'}
+    parsed = _parse_session_key('agent:main:telegram:thread:456:789')
+    assert parsed is not None and parsed['thread_id'] == '789'
