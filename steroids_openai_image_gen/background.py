@@ -8,11 +8,10 @@ from __future__ import annotations
 import json
 import os
 import threading
-import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 try:
     from .provider import SteroidsOpenAIImageGenProvider
@@ -29,6 +28,8 @@ except Exception:  # pragma: no cover - fallback for direct imports
 TRUTHY = {"1", "true", "yes", "on"}
 DEFAULT_MAX_JOBS = 4
 DEFAULT_MAX_CONCURRENT = 2
+COMPLETION_EVENT_TYPE = "async_delegation"
+BACKGROUND_DELIVERY_ID_PREFIX = "image_gen_"
 
 
 class BackgroundImageJobError(Exception):
@@ -138,6 +139,76 @@ def normalize_jobs(args: dict[str, Any]) -> list[BackgroundJobSpec]:
     return normalized
 
 
+def format_completion_message(job_id: str, result: dict[str, Any]) -> str:
+    """Return the user-visible completion text carried by the queue event."""
+    text = f"Image job {job_id} completed"
+    image_path = result.get("image") if isinstance(result, dict) else None
+    if image_path:
+        text += f"\nMEDIA:{image_path}"
+    return text
+
+
+def format_failure_message(job_id: str, error: str) -> str:
+    return f"Image job {job_id} failed: {error}"
+
+
+def make_completion_event(
+    origin_session_key: str,
+    job_id: str,
+    message: str,
+    *,
+    status: str = "completed",
+    error: str | None = None,
+) -> dict[str, Any]:
+    """Build a Hermes completion_queue async_delegation-compatible event.
+
+    Hermes gateway/CLI already drains process_registry.completion_queue and routes
+    async_delegation events by session_key. Reusing that runtime rail is safer for
+    plugins than importing private/nonexistent send helpers or reaching into live
+    gateway adapters from a worker thread.
+    """
+    now = datetime.now(timezone.utc).timestamp()
+    delivery_id = f"{BACKGROUND_DELIVERY_ID_PREFIX}{job_id}"
+    event: dict[str, Any] = {
+        "type": COMPLETION_EVENT_TYPE,
+        "delegation_id": delivery_id,
+        "session_key": origin_session_key,
+        "goal": f"Deliver background image generation result for {job_id}",
+        "context": "steroids-openai-image-gen background worker completion",
+        "toolsets": ["image_gen"],
+        "role": "plugin-worker",
+        "model": "plugin",
+        "status": status,
+        "summary": message,
+        "api_calls": 0,
+        "duration_seconds": 0,
+        "dispatched_at": now,
+        "completed_at": now,
+        "exit_reason": "completed" if status in {"completed", "success"} else "failed",
+    }
+    if error:
+        event["error"] = error
+    return event
+
+
+def enqueue_completion_event(event: dict[str, Any]) -> tuple[bool, str | None]:
+    """Push an event to Hermes' shared completion queue.
+
+    Returns (success, error). The caller persists this outcome in status.json so
+    delivery failures are visible via image_generate_background_status instead of
+    silently no-oping.
+    """
+    try:
+        from tools.process_registry import process_registry
+    except Exception as exc:
+        return False, f"tools.process_registry unavailable: {type(exc).__name__}: {exc}"
+    try:
+        process_registry.completion_queue.put(event)
+    except Exception as exc:  # pragma: no cover - queue.put should be stable
+        return False, f"completion_queue put failed: {type(exc).__name__}: {exc}"
+    return True, None
+
+
 class BackgroundImageJobRunner:
     def __init__(self) -> None:
         self._semaphore = threading.BoundedSemaphore(_env_int("STEROIDS_IMAGE_BG_MAX_CONCURRENT", DEFAULT_MAX_CONCURRENT, 1, 16))
@@ -156,7 +227,14 @@ class BackgroundImageJobRunner:
                 "origin_session_key": origin_session_key,
                 "spec": spec.__dict__,
             }
-            status = {**request, "status": "queued", "started_at": None, "ended_at": None, "error": None}
+            status = {
+                **request,
+                "status": "queued",
+                "started_at": None,
+                "ended_at": None,
+                "error": None,
+                "delivery": {"status": "pending", "error": None},
+            }
             _json_write(job_dir / "request.json", request)
             _json_write(job_dir / "status.json", status)
             _text_write(job_dir / "stdout.txt", "")
@@ -183,55 +261,79 @@ class BackgroundImageJobRunner:
                 provider = SteroidsOpenAIImageGenProvider()
                 result = provider.generate(**spec)
                 _json_write(job_dir / "result.json", result)
-                status.update({"status": "completed" if result.get("success") else "failed", "ended_at": _now_iso(), "error": result.get("error")})
+                final_status = "completed" if result.get("success") else "failed"
+                status.update({"status": final_status, "ended_at": _now_iso(), "error": result.get("error")})
                 _json_write(job_dir / "status.json", status)
-                self._deliver_result(origin_session_key, request["job_id"], result)
+                if result.get("success"):
+                    self._deliver_result(job_dir, origin_session_key, request["job_id"], result)
+                else:
+                    self._deliver_failure(job_dir, origin_session_key, request["job_id"], str(result.get("error") or "generation failed"))
             except Exception as exc:
                 error = f"{type(exc).__name__}: {exc}"
                 _text_write(job_dir / "stderr.txt", error)
                 status.update({"status": "failed", "ended_at": _now_iso(), "error": error})
                 _json_write(job_dir / "status.json", status)
-                self._deliver_failure(origin_session_key, request["job_id"], error)
+                self._deliver_failure(job_dir, origin_session_key, request["job_id"], error)
 
-    def _deliver_result(self, origin_session_key: str, job_id: str, result: dict[str, Any]) -> None:
-        text = f"Image job {job_id} completed"
-        image_path = result.get("image") if isinstance(result, dict) else None
-        if image_path:
-            text += f"\nMEDIA:{image_path}"
-        self._send_to_origin(origin_session_key, text)
+    def _deliver_result(self, job_dir: Path, origin_session_key: str, job_id: str, result: dict[str, Any]) -> None:
+        self._enqueue_delivery(job_dir, origin_session_key, job_id, format_completion_message(job_id, result))
 
-    def _deliver_failure(self, origin_session_key: str, job_id: str, error: str) -> None:
-        self._send_to_origin(origin_session_key, f"Image job {job_id} failed: {error}")
+    def _deliver_failure(self, job_dir: Path, origin_session_key: str, job_id: str, error: str) -> None:
+        self._enqueue_delivery(
+            job_dir,
+            origin_session_key,
+            job_id,
+            format_failure_message(job_id, error),
+            status="failed",
+            error=error,
+        )
 
-    def _send_to_origin(self, origin_session_key: str, text: str) -> None:
-        parsed = _parse_session_key(origin_session_key)
-        if not parsed:
-            return
+    def _enqueue_delivery(
+        self,
+        job_dir: Path,
+        origin_session_key: str,
+        job_id: str,
+        message: str,
+        *,
+        status: str = "completed",
+        error: str | None = None,
+    ) -> None:
+        event = make_completion_event(origin_session_key, job_id, message, status=status, error=error)
+        _json_write(job_dir / "delivery_event.json", event)
+        ok, queue_error = enqueue_completion_event(event)
+        self._record_delivery_status(job_dir, "queued" if ok else "failed", queue_error)
+
+    def _record_delivery_status(self, job_dir: Path, delivery_status: str, error: str | None) -> None:
         try:
-            from tools.send_message_tool import send_message
+            status = _read_json(job_dir / "status.json")
         except Exception:
-            return
-        platform = parsed["platform"]
-        if platform == "telegram" and parsed.get("thread_id"):
-            target = f"telegram:{parsed['chat_id']}:{parsed['thread_id']}"
-        elif platform == "telegram":
-            target = f"telegram:{parsed['chat_id']}"
-        elif platform == "discord":
-            target = f"discord:{parsed['chat_id']}"
-        else:
-            target = platform
-        try:
-            send_message(target, text)
-        except Exception:
-            pass
+            status = {}
+        status["delivery"] = {"status": delivery_status, "error": error, "updated_at": _now_iso()}
+        if error and not status.get("error"):
+            status["error"] = error
+        _json_write(job_dir / "status.json", status)
 
 
 def get_job_status(job_id: str) -> dict[str, Any]:
     job_dir = jobs_root() / job_id
     status_path = job_dir / "status.json"
     result_path = job_dir / "result.json"
+    delivery_event_path = job_dir / "delivery_event.json"
     if not status_path.exists():
         raise BackgroundImageJobError(f"job not found: {job_id}")
     status = _read_json(status_path)
     result = _read_json(result_path) if result_path.exists() else None
-    return {"success": True, "job_id": job_id, "status": status, "result": result, "paths": {"job_dir": str(job_dir), "status": str(status_path), "result": str(result_path)}}
+    delivery_event = _read_json(delivery_event_path) if delivery_event_path.exists() else None
+    return {
+        "success": True,
+        "job_id": job_id,
+        "status": status,
+        "result": result,
+        "delivery_event": delivery_event,
+        "paths": {
+            "job_dir": str(job_dir),
+            "status": str(status_path),
+            "result": str(result_path),
+            "delivery_event": str(delivery_event_path),
+        },
+    }
