@@ -1,7 +1,9 @@
 """Direct Hermes Codex Auth image-generation client."""
 from __future__ import annotations
 
+import base64
 import json
+import struct
 from typing import Any
 
 import httpx
@@ -10,8 +12,8 @@ from .config import SteroidsConfig
 from .refs import load_image_as_data_uri
 
 _CODEX_BASE_URL = "https://chatgpt.com/backend-api/codex"
-_CODEX_CHAT_MODEL = "gpt-5.1-codex"
-_INSTRUCTIONS = "You must fulfill image requests by using the image_generation tool."
+_CODEX_CHAT_MODEL = "gpt-5.5"
+_INSTRUCTIONS = "You are an image generation assistant."
 
 
 def read_codex_access_token(config: SteroidsConfig) -> str | None:
@@ -59,6 +61,9 @@ class CodexAuthClient:
                     exc.response.read()
                     raise RuntimeError(f"Codex Responses API HTTP {exc.response.status_code}: {exc.response.text[:800]}") from exc
                 for event in iter_sse_json(response):
+                    error = extract_error(event)
+                    if error:
+                        raise RuntimeError(error)
                     found = extract_image_b64(event)
                     if found:
                         image_b64 = found
@@ -67,7 +72,13 @@ class CodexAuthClient:
                         revised_prompt = prompt_found
         if not image_b64:
             raise RuntimeError("Codex response contained no image_generation result")
+        requested = requested_image_size(size)
+        actual = image_b64_dimensions(image_b64)
+        if requested and actual and not same_image_aspect_ratio(requested, actual):
+            raise RuntimeError(f"Codex image output size mismatch: requested {requested[0]}x{requested[1]}, got {actual[0]}x{actual[1]}")
         item = {"b64_json": image_b64}
+        if requested and actual and requested != actual:
+            item["actual_size"] = f"{actual[0]}x{actual[1]}"
         if revised_prompt:
             item["revised_prompt"] = revised_prompt
         return {"data": [item]}
@@ -82,37 +93,51 @@ class CodexAuthClient:
             "Accept": "text/event-stream",
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
+            "OpenAI-Beta": "responses=experimental",
+            "User-Agent": "codex_cli_rs/0.130.0 (steroids-openai-image-gen)",
         })
         return headers
 
     def _payload(self, *, prompt: str, size: str, quality: str, image_data_uris: list[str]) -> dict[str, Any]:
-        content = [{"type": "input_text", "text": prompt}]
+        user_text = self._user_text(prompt=prompt, size=size, quality=quality, image_count=len(image_data_uris))
+        content = []
         for uri in image_data_uris:
             content.append({"type": "input_image", "image_url": uri})
-        tool: dict[str, Any] = {
-            "type": "image_generation",
-            "model": "gpt-image-2",
-            "size": size,
-            "quality": quality,
-            "output_format": "png",
-            "background": "opaque",
-            "partial_images": 1,
-        }
-        if image_data_uris:
-            tool["action"] = "edit"
+        content.append({"type": "input_text", "text": user_text})
+        tool: dict[str, Any] = {"type": "image_generation", "output_format": "png"}
+        if size and size != "auto":
+            tool["size"] = size
         return {
             "model": _CODEX_CHAT_MODEL,
             "stream": True,
             "store": False,
             "instructions": _INSTRUCTIONS,
-            "input": [{"role": "user", "content": content}],
+            "input": [{"type": "message", "role": "user", "content": content}],
             "tools": [tool],
-            "tool_choice": {
-                "type": "allowed_tools",
-                "mode": "required",
-                "tools": [{"type": "image_generation"}],
-            },
+            "tool_choice": "required" if image_data_uris else "auto",
+            "parallel_tool_calls": False,
+            "reasoning": {"effort": "low", "summary": "auto"},
+            "include": ["reasoning.encrypted_content"],
+            "text": {"verbosity": "low"},
         }
+
+    def _user_text(self, *, prompt: str, size: str, quality: str, image_count: int) -> str:
+        if image_count:
+            text = (
+                "Use the image_generation tool to edit the attached reference image(s). "
+                f"Request: {prompt}. Output format: png."
+            )
+        else:
+            text = (
+                "Use the image_generation tool to render the following. "
+                f"Request: {prompt}. Output format: png."
+            )
+        if size and size != "auto":
+            text += f" Size: {size}."
+        if quality:
+            text += f" Quality: {quality}."
+        text += " Do not include explanatory text; produce only the image."
+        return text
 
 
 def iter_sse_json(response: Any):
@@ -174,6 +199,66 @@ def extract_image_b64(value: Any) -> str | None:
             if nested:
                 found = nested
     return found
+
+
+def extract_error(value: Any) -> str | None:
+    if not isinstance(value, dict):
+        return None
+    raw_error = value.get("error")
+    error = raw_error if isinstance(raw_error, dict) else value if value.get("type") == "error" else None
+    if not isinstance(error, dict):
+        return None
+    message = error.get("message")
+    code = error.get("code")
+    if isinstance(message, str) and message.strip():
+        return message.strip()
+    if isinstance(code, str) and code.strip():
+        return f"Codex image generation failed: {code.strip()}"
+    return "Codex image generation failed"
+
+
+def requested_image_size(size: str) -> tuple[int, int] | None:
+    if not size or size == "auto" or "x" not in size:
+        return None
+    width, height = size.split("x", 1)
+    try:
+        return int(width), int(height)
+    except Exception:
+        return None
+
+
+def image_b64_dimensions(value: str) -> tuple[int, int] | None:
+    try:
+        raw = base64.b64decode(value, validate=False)
+    except Exception:
+        return None
+    if raw.startswith(b"\x89PNG\r\n\x1a\n") and len(raw) >= 24:
+        return struct.unpack(">II", raw[16:24])
+    if raw.startswith(b"\xff\xd8"):
+        index = 2
+        while index + 9 < len(raw):
+            while index < len(raw) and raw[index] == 0xFF:
+                index += 1
+            if index >= len(raw):
+                return None
+            marker = raw[index]
+            index += 1
+            if marker in {0xD8, 0xD9}:
+                continue
+            if index + 2 > len(raw):
+                return None
+            segment_length = struct.unpack(">H", raw[index:index + 2])[0]
+            if marker in {*range(0xC0, 0xC4), *range(0xC5, 0xC8), *range(0xC9, 0xCC), *range(0xCD, 0xD0)}:
+                if index + 7 <= len(raw):
+                    height, width = struct.unpack(">HH", raw[index + 3:index + 7])
+                    return width, height
+                return None
+            index += segment_length
+    return None
+
+
+def same_image_aspect_ratio(requested: tuple[int, int], actual: tuple[int, int]) -> bool:
+    return requested[0] * actual[1] == requested[1] * actual[0]
 
 
 def extract_revised_prompt(value: Any) -> str | None:

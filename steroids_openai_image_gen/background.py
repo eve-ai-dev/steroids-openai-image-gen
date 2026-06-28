@@ -148,8 +148,11 @@ def format_completion_message(job_id: str, result: dict[str, Any]) -> str:
     return text
 
 
-def format_failure_message(job_id: str, error: str) -> str:
-    return f"Image job {job_id} failed: {error}"
+def format_failure_message(job_id: str, error: str, error_type: str | None = None) -> str:
+    prefix = f"Image job {job_id} failed"
+    if error_type:
+        prefix += f" [{error_type}]"
+    return f"{prefix}: {error}"
 
 
 def make_completion_event(
@@ -262,12 +265,12 @@ class BackgroundImageJobRunner:
                 result = provider.generate(**spec)
                 _json_write(job_dir / "result.json", result)
                 final_status = "completed" if result.get("success") else "failed"
-                status.update({"status": final_status, "ended_at": _now_iso(), "error": result.get("error")})
+                status.update({"status": final_status, "ended_at": _now_iso(), "error": result.get("error"), "error_type": result.get("error_type")})
                 _json_write(job_dir / "status.json", status)
                 if result.get("success"):
                     self._deliver_result(job_dir, origin_session_key, request["job_id"], result)
                 else:
-                    self._deliver_failure(job_dir, origin_session_key, request["job_id"], str(result.get("error") or "generation failed"))
+                    self._deliver_failure(job_dir, origin_session_key, request["job_id"], str(result.get("error") or "generation failed"), result.get("error_type"))
             except Exception as exc:
                 error = f"{type(exc).__name__}: {exc}"
                 _text_write(job_dir / "stderr.txt", error)
@@ -278,12 +281,12 @@ class BackgroundImageJobRunner:
     def _deliver_result(self, job_dir: Path, origin_session_key: str, job_id: str, result: dict[str, Any]) -> None:
         self._enqueue_delivery(job_dir, origin_session_key, job_id, format_completion_message(job_id, result))
 
-    def _deliver_failure(self, job_dir: Path, origin_session_key: str, job_id: str, error: str) -> None:
+    def _deliver_failure(self, job_dir: Path, origin_session_key: str, job_id: str, error: str, error_type: str | None = None) -> None:
         self._enqueue_delivery(
             job_dir,
             origin_session_key,
             job_id,
-            format_failure_message(job_id, error),
+            format_failure_message(job_id, error, error_type),
             status="failed",
             error=error,
         )

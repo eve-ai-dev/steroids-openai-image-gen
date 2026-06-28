@@ -110,20 +110,6 @@ class SteroidsOpenAIImageGenProvider(ImageGenProvider):
         if not prompt:
             return error_response(error="Prompt is required and must be a non-empty string", error_type="invalid_argument", provider=PROVIDER, model=cfg.model, aspect_ratio=aspect)
 
-        if cfg.mode == "codex-auth" and not _is_square_or_auto_size(size):
-            return error_response(
-                error=(
-                    f"Requested image size {size} requires a non-square aspect ratio, but direct Codex Auth mode "
-                    "currently cannot guarantee non-square output. Use mode=openai-compatible with an endpoint "
-                    "that supports OpenAI Images passthrough or request square size 1024x1024."
-                ),
-                error_type="unsupported_image_size",
-                provider=PROVIDER,
-                model=cfg.model,
-                prompt=prompt,
-                aspect_ratio=aspect,
-            )
-
         try:
             if cfg.mode == "openai-compatible":
                 client = OpenAICompatibleClient(cfg)
@@ -153,21 +139,12 @@ class SteroidsOpenAIImageGenProvider(ImageGenProvider):
             "mode": cfg.mode,
             "modality": "image" if sources else "text",
         }
+        actual_size = _payload_actual_size(payload)
+        if actual_size:
+            extra["actual_size"] = actual_size
         if revised_prompt:
             extra["revised_prompt"] = revised_prompt
         return success_response(image=image_ref, model=cfg.model, prompt=prompt, aspect_ratio=aspect, provider=PROVIDER, extra=extra)
-
-
-def _is_square_or_auto_size(size: str) -> bool:
-    if size == "auto":
-        return True
-    width, sep, height = size.partition("x")
-    if not sep:
-        return False
-    try:
-        return int(width) == int(height)
-    except ValueError:
-        return False
 
 
 def _save_payload_image(payload: dict[str, Any], *, prefix: str) -> tuple[str, str | None]:
@@ -188,3 +165,11 @@ def _save_payload_image(payload: dict[str, Any], *, prefix: str) -> tuple[str, s
         except Exception:
             return url, revised_prompt
     raise ValueError("response contained neither b64_json nor url")
+
+
+def _payload_actual_size(payload: dict[str, Any]) -> str | None:
+    data = payload.get("data") if isinstance(payload, dict) else None
+    if not isinstance(data, list) or not data or not isinstance(data[0], dict):
+        return None
+    value = data[0].get("actual_size")
+    return value if isinstance(value, str) and value.strip() else None

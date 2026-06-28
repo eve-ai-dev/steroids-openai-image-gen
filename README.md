@@ -53,8 +53,8 @@ The plugin sends OpenAI-compatible `size` values for requested aspect ratios:
 `1536x1024` for landscape, `1024x1024` for square, and `1024x1536` for
 portrait. It does not silently downgrade non-square requests to square and does
 not post-process resize/crop images. If the configured backend returns an
-OpenAI-style error such as `unsupported_image_size`, that error is surfaced to
-the caller.
+OpenAI-style error such as `invalid_image_size` or `codex_image_size_mismatch`,
+that error is surfaced to the caller.
 
 Expected response shape:
 
@@ -63,7 +63,8 @@ Expected response shape:
   "data": [
     {
       "b64_json": "...",
-      "revised_prompt": "optional"
+      "revised_prompt": "optional",
+      "actual_size": "optional"
     }
   ]
 }
@@ -86,7 +87,12 @@ image_gen:
     max_reference_images: 16
 ```
 
-The plugin reads Hermes' Codex token via Hermes' internal Codex auth helper and sends a Responses-style request with the `image_generation` tool.
+The plugin reads Hermes' Codex token via Hermes' internal Codex auth helper and
+sends a Responses-style request with the `image_generation` tool. It uses the
+same OpenAI-compatible `size` values listed above and verifies the returned
+bitmap aspect ratio when a concrete size was requested. If Codex Auth returns
+the requested aspect ratio at a different pixel scale, the response keeps the
+image and records `actual_size`.
 
 ## Tool arguments
 

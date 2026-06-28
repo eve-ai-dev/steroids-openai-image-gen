@@ -101,7 +101,13 @@ class OpenAICompatibleClient:
                 message = raw_message if isinstance(raw_message, str) and raw_message.strip() else None
                 error_code = raw_code if isinstance(raw_code, str) and raw_code.strip() else None
             if not message:
-                message = str(err)
+                raw = payload.get("raw") if isinstance(payload, dict) else None
+                if isinstance(raw, str) and raw.strip():
+                    message = raw.strip()[:1000]
+                elif error_code:
+                    message = f"OpenAI-compatible image backend returned {error_code} without a message (HTTP {response.status_code})"
+                else:
+                    message = f"OpenAI-compatible image backend returned HTTP {response.status_code} without a message"
             raise OpenAICompatibleAPIError(
                 status_code=response.status_code,
                 message=message,

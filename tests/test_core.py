@@ -11,10 +11,11 @@ from steroids_openai_image_gen.background import (
     BackgroundImageJobError,
     BackgroundImageJobRunner,
     format_completion_message,
+    format_failure_message,
     make_completion_event,
     normalize_jobs,
 )
-from steroids_openai_image_gen.codex_auth import extract_image_b64
+from steroids_openai_image_gen.codex_auth import CodexAuthClient, extract_image_b64
 from steroids_openai_image_gen.config import SteroidsConfig
 from steroids_openai_image_gen.provider import _save_payload_image
 from steroids_openai_image_gen.openai_compatible import OpenAICompatibleAPIError, OpenAICompatibleClient
@@ -83,6 +84,37 @@ def test_openai_compatible_error_preserves_backend_code_and_message():
     assert exc_info.value.message == 'backend says this size is unsupported'
 
 
+def test_openai_compatible_error_fills_empty_backend_message():
+    class Response:
+        status_code = 502
+        text = ''
+
+        def json(self):
+            return {'error': {'message': '', 'type': 'server_error', 'code': 'codex_image_error'}}
+
+    with pytest.raises(OpenAICompatibleAPIError) as exc_info:
+        OpenAICompatibleClient._json_or_raise(Response())
+
+    assert exc_info.value.error_code == 'codex_image_error'
+    assert exc_info.value.message == 'OpenAI-compatible image backend returned codex_image_error without a message (HTTP 502)'
+
+
+def test_codex_auth_payload_uses_minimal_builtin_tool_shape():
+    body = CodexAuthClient(SteroidsConfig(mode='codex-auth'))._payload(
+        prompt='draw a gate',
+        size='1536x1024',
+        quality='high',
+        image_data_uris=[],
+    )
+
+    assert body['model'] == 'gpt-5.5'
+    assert body['tool_choice'] == 'auto'
+    assert body['tools'][0] == {'type': 'image_generation', 'output_format': 'png', 'size': '1536x1024'}
+    prompt_text = body['input'][0]['content'][-1]['text']
+    assert 'Size: 1536x1024' in prompt_text
+    assert 'Quality: high' in prompt_text
+
+
 def test_provider_returns_structured_openai_compatible_errors(monkeypatch):
     import steroids_openai_image_gen.provider as p
 
@@ -110,20 +142,35 @@ def test_provider_returns_structured_openai_compatible_errors(monkeypatch):
     assert result['error'] == 'non-square size unsupported by backend'
 
 
-def test_codex_auth_mode_rejects_non_square_before_client_call(monkeypatch):
+def test_codex_auth_mode_allows_non_square_client_call(monkeypatch):
     import steroids_openai_image_gen.provider as p
 
     class Client:
+        calls = []
+
         def __init__(self, cfg):
-            raise AssertionError('CodexAuthClient should not be constructed for non-square preflight')
+            pass
+
+        def available(self):
+            return True
+
+        def generate(self, **kwargs):
+            self.calls.append(kwargs)
+            return {'data': [{'b64_json': 'abc', 'actual_size': '1254x1254'}]}
 
     monkeypatch.setattr(p, 'load_config', lambda: SteroidsConfig(mode='codex-auth'))
     monkeypatch.setattr(p, 'CodexAuthClient', Client)
+    monkeypatch.setattr(p, 'save_b64_image', lambda b64, prefix: '/tmp/fake.png')
 
     result = p.SteroidsOpenAIImageGenProvider().generate('draw a gate', aspect_ratio='landscape')
 
-    assert result['error_type'] == 'unsupported_image_size'
-    assert '1536x1024' in result['error']
+    assert result['image'] == '/tmp/fake.png'
+    assert result['extra']['actual_size'] == '1254x1254'
+    assert Client.calls[0]['size'] == '1536x1024'
+
+
+def test_format_failure_message_includes_error_type():
+    assert format_failure_message('job1', 'failed upstream', 'codex_image_error') == 'Image job job1 failed [codex_image_error]: failed upstream'
 
 
 def test_normalize_jobs_caps_and_single_prompt():
