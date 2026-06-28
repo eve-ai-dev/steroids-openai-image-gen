@@ -36,7 +36,7 @@ except Exception:  # pragma: no cover - allow unit tests to import helper functi
 
 from .codex_auth import CodexAuthClient
 from .config import load_config
-from .openai_compatible import OpenAICompatibleClient
+from .openai_compatible import OpenAICompatibleAPIError, OpenAICompatibleClient
 from .refs import collect_sources
 
 PROVIDER = "steroids-openai"
@@ -110,6 +110,20 @@ class SteroidsOpenAIImageGenProvider(ImageGenProvider):
         if not prompt:
             return error_response(error="Prompt is required and must be a non-empty string", error_type="invalid_argument", provider=PROVIDER, model=cfg.model, aspect_ratio=aspect)
 
+        if cfg.mode == "codex-auth" and not _is_square_or_auto_size(size):
+            return error_response(
+                error=(
+                    f"Requested image size {size} requires a non-square aspect ratio, but direct Codex Auth mode "
+                    "currently cannot guarantee non-square output. Use mode=openai-compatible with an endpoint "
+                    "that supports OpenAI Images passthrough or request square size 1024x1024."
+                ),
+                error_type="unsupported_image_size",
+                provider=PROVIDER,
+                model=cfg.model,
+                prompt=prompt,
+                aspect_ratio=aspect,
+            )
+
         try:
             if cfg.mode == "openai-compatible":
                 client = OpenAICompatibleClient(cfg)
@@ -123,6 +137,8 @@ class SteroidsOpenAIImageGenProvider(ImageGenProvider):
                 payload = client.generate(prompt=prompt, size=size, quality=selected_quality, sources=sources)
             else:
                 return error_response(error=f"Unsupported mode: {cfg.mode}", error_type="invalid_config", provider=PROVIDER, model=cfg.model, prompt=prompt, aspect_ratio=aspect)
+        except OpenAICompatibleAPIError as exc:
+            return error_response(error=exc.message, error_type=exc.error_code or "api_error", provider=PROVIDER, model=cfg.model, prompt=prompt, aspect_ratio=aspect)
         except Exception as exc:
             return error_response(error=f"{cfg.mode} image generation failed: {exc}", error_type="api_error", provider=PROVIDER, model=cfg.model, prompt=prompt, aspect_ratio=aspect)
 
@@ -140,6 +156,18 @@ class SteroidsOpenAIImageGenProvider(ImageGenProvider):
         if revised_prompt:
             extra["revised_prompt"] = revised_prompt
         return success_response(image=image_ref, model=cfg.model, prompt=prompt, aspect_ratio=aspect, provider=PROVIDER, extra=extra)
+
+
+def _is_square_or_auto_size(size: str) -> bool:
+    if size == "auto":
+        return True
+    width, sep, height = size.partition("x")
+    if not sep:
+        return False
+    try:
+        return int(width) == int(height)
+    except ValueError:
+        return False
 
 
 def _save_payload_image(payload: dict[str, Any], *, prefix: str) -> tuple[str, str | None]:

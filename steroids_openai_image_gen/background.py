@@ -99,10 +99,10 @@ def _job_id() -> str:
 
 def normalize_jobs(args: dict[str, Any]) -> list[BackgroundJobSpec]:
     jobs = args.get("jobs")
-    if jobs is None:
+    if jobs is None or jobs == []:
         prompt = str(args.get("prompt") or "").strip()
         if not prompt:
-            raise BackgroundImageJobError("prompt is required")
+            raise BackgroundImageJobError("prompt is required when jobs is omitted or empty")
         jobs = [{
             "prompt": prompt,
             "aspect_ratio": args.get("aspect_ratio", "landscape"),

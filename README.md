@@ -49,6 +49,13 @@ The plugin sends:
 - text-only: `POST {base_url}/images/generations`
 - edits/references: `POST {base_url}/images/edits` multipart with `image` for the primary source and `image[]` for extra refs
 
+The plugin sends OpenAI-compatible `size` values for requested aspect ratios:
+`1536x1024` for landscape, `1024x1024` for square, and `1024x1536` for
+portrait. It does not silently downgrade non-square requests to square and does
+not post-process resize/crop images. If the configured backend returns an
+OpenAI-style error such as `unsupported_image_size`, that error is surfaced to
+the caller.
+
 Expected response shape:
 
 ```json
@@ -107,4 +114,7 @@ When generation finishes, the worker enqueues a Hermes `async_delegation` comple
 
 - Use `model: gpt-image-2`, not `gpt-image-2-medium`; quality is a separate parameter.
 - OpenAI-compatible edit endpoints should support multipart `image` + `image[]` and return `b64_json`.
+- When `image_generate_background` is used for the single-image shortcut, omit
+  `jobs`. If an empty `jobs: []` is sent with a top-level `prompt`, the plugin
+  treats it as the same shortcut.
 - Nested `${ENV_VAR}` values in this plugin's config are expanded by the plugin itself, because some Hermes versions do not expand nested plugin config before providers read it.

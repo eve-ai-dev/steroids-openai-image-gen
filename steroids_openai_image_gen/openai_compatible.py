@@ -9,6 +9,22 @@ from .config import SteroidsConfig
 from .refs import load_image_bytes
 
 
+class OpenAICompatibleAPIError(RuntimeError):
+    def __init__(
+        self,
+        *,
+        status_code: int,
+        message: str,
+        error_code: str | None = None,
+        payload: Any = None,
+    ) -> None:
+        self.status_code = status_code
+        self.message = message
+        self.error_code = error_code
+        self.payload = payload
+        super().__init__(f"HTTP {status_code}: {message}")
+
+
 class OpenAICompatibleClient:
     def __init__(self, config: SteroidsConfig):
         self.config = config
@@ -77,7 +93,21 @@ class OpenAICompatibleClient:
             payload = {"raw": response.text[:1000]}
         if response.status_code >= 400:
             err = payload.get("error") if isinstance(payload, dict) else payload
-            raise RuntimeError(f"HTTP {response.status_code}: {err}")
+            message = None
+            error_code = None
+            if isinstance(err, dict):
+                raw_message = err.get("message")
+                raw_code = err.get("code")
+                message = raw_message if isinstance(raw_message, str) and raw_message.strip() else None
+                error_code = raw_code if isinstance(raw_code, str) and raw_code.strip() else None
+            if not message:
+                message = str(err)
+            raise OpenAICompatibleAPIError(
+                status_code=response.status_code,
+                message=message,
+                error_code=error_code,
+                payload=payload,
+            )
         if not isinstance(payload, dict):
             raise RuntimeError("API returned non-object JSON")
         return payload

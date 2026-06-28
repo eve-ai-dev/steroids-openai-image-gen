@@ -19,7 +19,7 @@ def _schema() -> dict[str, Any]:
             "type": "object",
             "properties": {
                 "prompt": {"type": "string", "description": "Detailed text prompt describing the desired image or edit."},
-                "aspect_ratio": {"type": "string", "enum": ["landscape", "square", "portrait"], "default": "landscape"},
+                "aspect_ratio": {"type": "string", "enum": ["landscape", "square", "portrait"], "default": "landscape", "description": "Requested aspect ratio. The active backend may reject unsupported sizes explicitly."},
                 "quality": {"type": "string", "enum": ["low", "medium", "high", "auto"], "description": "Optional quality/speed tier. Use medium by default, low for drafts, high for final assets."},
                 "image_url": {"type": "string", "description": "Optional primary image to edit/use as source. Accepts local path, HTTPS URL, or data:image URL."},
                 "reference_image_urls": {"type": "array", "items": {"type": "string"}, "description": "Optional extra reference images as local paths, HTTPS URLs, or data:image URLs."},
@@ -43,7 +43,8 @@ def _background_schema() -> dict[str, Any]:
                 "prompt": {"type": "string", "description": "Single-image shortcut. Used when jobs is omitted."},
                 "jobs": {
                     "type": "array",
-                    "description": "Optional batch of image jobs. If provided, prompt/top-level params are ignored.",
+                    "minItems": 1,
+                    "description": "Optional batch of image jobs. Omit jobs for the single-image shortcut; do not send an empty list.",
                     "items": {
                         "type": "object",
                         "properties": {
@@ -58,7 +59,7 @@ def _background_schema() -> dict[str, Any]:
                         "additionalProperties": False,
                     },
                 },
-                "aspect_ratio": {"type": "string", "enum": ["landscape", "square", "portrait"], "default": "landscape"},
+                "aspect_ratio": {"type": "string", "enum": ["landscape", "square", "portrait"], "default": "landscape", "description": "Requested aspect ratio. The active backend may reject unsupported sizes explicitly."},
                 "quality": {"type": "string", "enum": ["low", "medium", "high", "auto"], "default": "medium"},
                 "image_url": {"type": "string"},
                 "reference_image_urls": {"type": "array", "items": {"type": "string"}},

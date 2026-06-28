@@ -17,6 +17,7 @@ from steroids_openai_image_gen.background import (
 from steroids_openai_image_gen.codex_auth import extract_image_b64
 from steroids_openai_image_gen.config import SteroidsConfig
 from steroids_openai_image_gen.provider import _save_payload_image
+from steroids_openai_image_gen.openai_compatible import OpenAICompatibleAPIError, OpenAICompatibleClient
 from steroids_openai_image_gen.refs import collect_sources, load_image_as_data_uri, load_image_bytes
 
 
@@ -60,11 +61,88 @@ def test_config_defaults():
     assert cfg.quality == 'medium'
 
 
+def test_openai_compatible_error_preserves_backend_code_and_message():
+    class Response:
+        status_code = 400
+        text = ''
+
+        def json(self):
+            return {
+                'error': {
+                    'message': 'backend says this size is unsupported',
+                    'type': 'invalid_request_error',
+                    'code': 'unsupported_image_size',
+                }
+            }
+
+    with pytest.raises(OpenAICompatibleAPIError) as exc_info:
+        OpenAICompatibleClient._json_or_raise(Response())
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.error_code == 'unsupported_image_size'
+    assert exc_info.value.message == 'backend says this size is unsupported'
+
+
+def test_provider_returns_structured_openai_compatible_errors(monkeypatch):
+    import steroids_openai_image_gen.provider as p
+
+    class Client:
+        def __init__(self, cfg):
+            pass
+
+        def available(self):
+            return True
+
+        def generate(self, **kwargs):
+            raise OpenAICompatibleAPIError(
+                status_code=400,
+                message='non-square size unsupported by backend',
+                error_code='unsupported_image_size',
+                payload={},
+            )
+
+    monkeypatch.setattr(p, 'load_config', lambda: SteroidsConfig(base_url='http://route.test/v1'))
+    monkeypatch.setattr(p, 'OpenAICompatibleClient', Client)
+
+    result = p.SteroidsOpenAIImageGenProvider().generate('draw a gate', aspect_ratio='landscape')
+
+    assert result['error_type'] == 'unsupported_image_size'
+    assert result['error'] == 'non-square size unsupported by backend'
+
+
+def test_codex_auth_mode_rejects_non_square_before_client_call(monkeypatch):
+    import steroids_openai_image_gen.provider as p
+
+    class Client:
+        def __init__(self, cfg):
+            raise AssertionError('CodexAuthClient should not be constructed for non-square preflight')
+
+    monkeypatch.setattr(p, 'load_config', lambda: SteroidsConfig(mode='codex-auth'))
+    monkeypatch.setattr(p, 'CodexAuthClient', Client)
+
+    result = p.SteroidsOpenAIImageGenProvider().generate('draw a gate', aspect_ratio='landscape')
+
+    assert result['error_type'] == 'unsupported_image_size'
+    assert '1536x1024' in result['error']
+
+
 def test_normalize_jobs_caps_and_single_prompt():
     jobs = normalize_jobs({'prompt': 'hello', 'aspect_ratio': 'square'})
     assert len(jobs) == 1
     assert jobs[0].prompt == 'hello'
     assert jobs[0].aspect_ratio == 'square'
+
+
+def test_normalize_jobs_empty_list_uses_prompt_shortcut():
+    jobs = normalize_jobs({'prompt': 'hello', 'jobs': [], 'aspect_ratio': 'square'})
+    assert len(jobs) == 1
+    assert jobs[0].prompt == 'hello'
+    assert jobs[0].aspect_ratio == 'square'
+
+
+def test_normalize_jobs_empty_list_requires_prompt():
+    with pytest.raises(BackgroundImageJobError, match='prompt is required when jobs is omitted or empty'):
+        normalize_jobs({'jobs': []})
 
 
 def test_normalize_jobs_rejects_over_cap(monkeypatch):
