@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import base64
+import io
 import json
 import struct
 from typing import Any
@@ -74,10 +75,20 @@ class CodexAuthClient:
             raise RuntimeError("Codex response contained no image_generation result")
         requested = requested_image_size(size)
         actual = image_b64_dimensions(image_b64)
-        if requested and actual and not same_image_aspect_ratio(requested, actual):
-            raise RuntimeError(f"Codex image output size mismatch: requested {requested[0]}x{requested[1]}, got {actual[0]}x{actual[1]}")
-        item = {"b64_json": image_b64}
+        normalized_from = None
         if requested and actual and requested != actual:
+            normalized_b64 = normalize_image_b64_to_size(image_b64, requested)
+            if normalized_b64:
+                image_b64 = normalized_b64
+                normalized_from = f"{actual[0]}x{actual[1]}"
+            elif not same_image_aspect_ratio(requested, actual):
+                raise RuntimeError(f"Codex image output size mismatch: requested {requested[0]}x{requested[1]}, got {actual[0]}x{actual[1]}")
+        item = {"b64_json": image_b64}
+        if normalized_from:
+            assert requested is not None
+            item["actual_size"] = normalized_from
+            item["normalized_size"] = f"{requested[0]}x{requested[1]}"
+        elif requested and actual and requested != actual:
             item["actual_size"] = f"{actual[0]}x{actual[1]}"
         if revised_prompt:
             item["revised_prompt"] = revised_prompt
@@ -255,6 +266,38 @@ def image_b64_dimensions(value: str) -> tuple[int, int] | None:
                 return None
             index += segment_length
     return None
+
+
+def normalize_image_b64_to_size(value: str, size: tuple[int, int]) -> str | None:
+    """Resize/pad a backend image to the exact requested PNG size.
+
+    Codex image generation often treats size as an orientation hint, not a hard
+    pixel contract. Keep the full image visible and letterbox/pillarbox it so
+    downstream Hermes tooling receives deterministic dimensions.
+    """
+    try:
+        from PIL import Image
+    except Exception:
+        return None
+    try:
+        raw = base64.b64decode(value, validate=False)
+        with Image.open(io.BytesIO(raw)) as image:
+            image.load()
+            source = image.convert("RGBA")
+    except Exception:
+        return None
+    target_w, target_h = size
+    if target_w <= 0 or target_h <= 0 or source.width <= 0 or source.height <= 0:
+        return None
+    scale = min(target_w / source.width, target_h / source.height)
+    resized_w = max(1, round(source.width * scale))
+    resized_h = max(1, round(source.height * scale))
+    resized = source.resize((resized_w, resized_h), Image.Resampling.LANCZOS)
+    background = Image.new("RGBA", (target_w, target_h), (0, 0, 0, 0))
+    background.paste(resized, ((target_w - resized_w) // 2, (target_h - resized_h) // 2), resized)
+    output = io.BytesIO()
+    background.save(output, format="PNG")
+    return base64.b64encode(output.getvalue()).decode("ascii")
 
 
 def same_image_aspect_ratio(requested: tuple[int, int], actual: tuple[int, int]) -> bool:

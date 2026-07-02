@@ -15,18 +15,26 @@ from steroids_openai_image_gen.background import (
     make_completion_event,
     normalize_jobs,
 )
-from steroids_openai_image_gen.codex_auth import CodexAuthClient, extract_image_b64
+from steroids_openai_image_gen.codex_auth import (
+    CodexAuthClient,
+    extract_image_b64,
+    image_b64_dimensions,
+    normalize_image_b64_to_size,
+)
 from steroids_openai_image_gen.config import SteroidsConfig
 from steroids_openai_image_gen.provider import _save_payload_image
 from steroids_openai_image_gen.openai_compatible import OpenAICompatibleAPIError, OpenAICompatibleClient
 from steroids_openai_image_gen.refs import collect_sources, load_image_as_data_uri, load_image_bytes
 
 
-def png_bytes():
+def png_bytes(width=2, height=1):
     def chunk(t, d):
         return struct.pack('>I', len(d)) + t + d + struct.pack('>I', zlib.crc32(t + d) & 0xffffffff)
-    raw = b'\x00' + bytes([255, 0, 0]) * 2
-    return b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', 2, 1, 8, 2, 0, 0, 0)) + chunk(b'IDAT', zlib.compress(raw)) + chunk(b'IEND', b'')
+    raw_rows = []
+    for _ in range(height):
+        raw_rows.append(b'\x00' + bytes([255, 0, 0]) * width)
+    raw = b''.join(raw_rows)
+    return b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', width, height, 8, 2, 0, 0, 0)) + chunk(b'IDAT', zlib.compress(raw)) + chunk(b'IEND', b'')
 
 
 def test_collect_sources_caps_primary_plus_refs():
@@ -45,6 +53,15 @@ def test_load_data_uri_roundtrip():
 
 def test_extract_image_b64_nested_prefers_nested():
     assert extract_image_b64({'foo': [{'type': 'image_generation_call', 'result': 'x' * 120}]}) == 'x' * 120
+
+
+def test_normalize_image_b64_to_size_resizes_and_pads_png():
+    source_b64 = base64.b64encode(png_bytes(width=3, height=5)).decode()
+
+    normalized = normalize_image_b64_to_size(source_b64, (1024, 1536))
+
+    assert normalized is not None
+    assert image_b64_dimensions(normalized) == (1024, 1536)
 
 
 def test_save_payload_image_b64(monkeypatch):
