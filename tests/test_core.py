@@ -24,7 +24,12 @@ from steroids_openai_image_gen.codex_auth import (
 from steroids_openai_image_gen.config import SteroidsConfig
 from steroids_openai_image_gen.provider import _save_payload_image
 from steroids_openai_image_gen.openai_compatible import OpenAICompatibleAPIError, OpenAICompatibleClient
-from steroids_openai_image_gen.refs import collect_sources, load_image_as_data_uri, load_image_bytes
+from steroids_openai_image_gen.refs import (
+    collect_sources,
+    load_image_as_data_uri,
+    load_image_bytes,
+    validate_edit_mask_bytes,
+)
 
 
 def png_bytes(width=2, height=1):
@@ -35,6 +40,13 @@ def png_bytes(width=2, height=1):
         raw_rows.append(b'\x00' + bytes([255, 0, 0]) * width)
     raw = b''.join(raw_rows)
     return b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', width, height, 8, 2, 0, 0, 0)) + chunk(b'IDAT', zlib.compress(raw)) + chunk(b'IEND', b'')
+
+
+def rgba_png_bytes(width=2, height=1):
+    def chunk(t, d):
+        return struct.pack('>I', len(d)) + t + d + struct.pack('>I', zlib.crc32(t + d) & 0xffffffff)
+    raw = b''.join(b'\x00' + bytes([0, 0, 0, 0]) * width for _ in range(height))
+    return b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', width, height, 8, 6, 0, 0, 0)) + chunk(b'IDAT', zlib.compress(raw)) + chunk(b'IEND', b'')
 
 
 def test_collect_sources_caps_primary_plus_refs():
@@ -116,6 +128,49 @@ def test_openai_compatible_error_fills_empty_backend_message():
     assert exc_info.value.message == 'OpenAI-compatible image backend returned codex_image_error without a message (HTTP 502)'
 
 
+def test_openai_compatible_edit_sends_mask_and_input_fidelity(tmp_path, monkeypatch):
+    source = tmp_path / 'source.png'
+    mask = tmp_path / 'mask.png'
+    source.write_bytes(png_bytes(2, 1))
+    mask.write_bytes(rgba_png_bytes(2, 1))
+    captured = {}
+
+    class Response:
+        status_code = 200
+        text = ''
+
+        def json(self):
+            return {'data': [{'b64_json': 'abc'}]}
+
+    def fake_post(url, **kwargs):
+        captured.update({'url': url, **kwargs})
+        return Response()
+
+    monkeypatch.setattr('steroids_openai_image_gen.openai_compatible.requests.post', fake_post)
+    client = OpenAICompatibleClient(SteroidsConfig(base_url='http://route.test/v1'))
+
+    client.edit(
+        prompt='repair only the transparent region',
+        size='1024x1536',
+        quality='high',
+        sources=[str(source)],
+        mask_url=str(mask),
+        input_fidelity='high',
+    )
+
+    assert captured['url'].endswith('/images/edits')
+    assert captured['data']['input_fidelity'] == 'high'
+    assert [field for field, _value in captured['files']] == ['image', 'mask']
+    assert captured['files'][1][1][1] == rgba_png_bytes(2, 1)
+
+
+def test_edit_mask_validation_requires_matching_alpha_png():
+    with pytest.raises(ValueError, match='dimensions must match'):
+        validate_edit_mask_bytes(png_bytes(2, 1), rgba_png_bytes(1, 1))
+    with pytest.raises(ValueError, match='alpha channel'):
+        validate_edit_mask_bytes(png_bytes(2, 1), png_bytes(2, 1))
+
+
 def test_codex_auth_payload_uses_minimal_builtin_tool_shape():
     body = CodexAuthClient(SteroidsConfig(mode='codex-auth'))._payload(
         prompt='draw a gate',
@@ -130,6 +185,22 @@ def test_codex_auth_payload_uses_minimal_builtin_tool_shape():
     prompt_text = body['input'][0]['content'][-1]['text']
     assert 'Size: 1536x1024' in prompt_text
     assert 'Quality: high' in prompt_text
+
+
+def test_codex_auth_edit_payload_sets_action_and_fidelity():
+    source = 'data:image/png;base64,c291cmNl'
+    body = CodexAuthClient(SteroidsConfig(mode='codex-auth'))._payload(
+        prompt='repair the grip',
+        size='1024x1536',
+        quality='high',
+        image_data_uris=[source],
+        input_fidelity='high',
+    )
+
+    assert body['input'][0]['content'][0] == {'type': 'input_image', 'image_url': source}
+    assert body['tool_choice'] == 'required'
+    assert body['tools'][0]['action'] == 'edit'
+    assert body['tools'][0]['input_fidelity'] == 'high'
 
 
 def test_provider_returns_structured_openai_compatible_errors(monkeypatch):
@@ -159,6 +230,73 @@ def test_provider_returns_structured_openai_compatible_errors(monkeypatch):
     assert result['error'] == 'non-square size unsupported by backend'
 
 
+def test_provider_forwards_mask_and_reports_image_modality(monkeypatch):
+    import steroids_openai_image_gen.provider as p
+
+    class Client:
+        calls = []
+
+        def __init__(self, cfg):
+            pass
+
+        def available(self):
+            return True
+
+        def edit(self, **kwargs):
+            self.calls.append(kwargs)
+            return {'data': [{'b64_json': 'abc'}]}
+
+    monkeypatch.setattr(p, 'load_config', lambda: SteroidsConfig(base_url='http://route.test/v1'))
+    monkeypatch.setattr(p, 'OpenAICompatibleClient', Client)
+    monkeypatch.setattr(p, 'save_b64_image', lambda b64, prefix: '/tmp/fake.png')
+
+    result = p.SteroidsOpenAIImageGenProvider().generate(
+        'repair the grip',
+        image_url='/tmp/source.png',
+        mask_url='/tmp/mask.png',
+        input_fidelity='high',
+    )
+
+    assert Client.calls[0]['mask_url'] == '/tmp/mask.png'
+    assert Client.calls[0]['input_fidelity'] == 'high'
+    assert result['modality'] == 'image'
+
+
+def test_provider_returns_invalid_argument_for_bad_mask(monkeypatch):
+    import steroids_openai_image_gen.provider as p
+
+    class Client:
+        def __init__(self, cfg):
+            pass
+
+        def available(self):
+            return True
+
+        def edit(self, **kwargs):
+            raise ValueError("mask PNG must include an alpha channel")
+
+    monkeypatch.setattr(p, 'load_config', lambda: SteroidsConfig(base_url='http://route.test/v1'))
+    monkeypatch.setattr(p, 'OpenAICompatibleClient', Client)
+    result = p.SteroidsOpenAIImageGenProvider().generate(
+        'repair',
+        image_url='/tmp/source.png',
+        mask_url='/tmp/mask.png',
+    )
+
+    assert result['error_type'] == 'invalid_argument'
+    assert result['error'] == 'mask PNG must include an alpha channel'
+
+
+def test_provider_rejects_mask_without_primary_image(monkeypatch):
+    import steroids_openai_image_gen.provider as p
+
+    monkeypatch.setattr(p, 'load_config', lambda: SteroidsConfig(base_url='http://route.test/v1'))
+    result = p.SteroidsOpenAIImageGenProvider().generate('repair', mask_url='/tmp/mask.png')
+
+    assert result['error_type'] == 'invalid_argument'
+    assert result['error'] == 'mask_url requires image_url'
+
+
 def test_codex_auth_mode_allows_non_square_client_call(monkeypatch):
     import steroids_openai_image_gen.provider as p
 
@@ -182,7 +320,7 @@ def test_codex_auth_mode_allows_non_square_client_call(monkeypatch):
     result = p.SteroidsOpenAIImageGenProvider().generate('draw a gate', aspect_ratio='landscape')
 
     assert result['image'] == '/tmp/fake.png'
-    assert result['extra']['actual_size'] == '1254x1254'
+    assert result['actual_size'] == '1254x1254'
     assert Client.calls[0]['size'] == '1536x1024'
 
 
@@ -191,10 +329,19 @@ def test_format_failure_message_includes_error_type():
 
 
 def test_normalize_jobs_caps_and_single_prompt():
-    jobs = normalize_jobs({'prompt': 'hello', 'aspect_ratio': 'square'})
+    jobs = normalize_jobs({
+        'prompt': 'hello',
+        'aspect_ratio': 'square',
+        'image_url': '/tmp/source.png',
+        'mask_url': '/tmp/mask.png',
+        'input_fidelity': 'high',
+    })
     assert len(jobs) == 1
     assert jobs[0].prompt == 'hello'
     assert jobs[0].aspect_ratio == 'square'
+    assert jobs[0].image_url == '/tmp/source.png'
+    assert jobs[0].mask_url == '/tmp/mask.png'
+    assert jobs[0].input_fidelity == 'high'
 
 
 def test_normalize_jobs_empty_list_uses_prompt_shortcut():

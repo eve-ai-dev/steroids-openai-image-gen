@@ -4,6 +4,7 @@ from __future__ import annotations
 import base64
 import mimetypes
 import os
+import struct
 from pathlib import Path
 from typing import Iterable
 from urllib.parse import urlparse
@@ -84,6 +85,39 @@ def load_image_bytes(ref: str, *, max_bytes: int, allow_remote: bool = True) -> 
 def load_image_as_data_uri(ref: str, *, max_bytes: int, allow_remote: bool = True) -> str:
     data, mime, _ = load_image_bytes(ref, max_bytes=max_bytes, allow_remote=allow_remote)
     return f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}"
+
+
+def png_edit_metadata(data: bytes) -> tuple[int, int, bool]:
+    if len(data) < 33 or not data.startswith(b"\x89PNG\r\n\x1a\n") or data[12:16] != b"IHDR":
+        raise ValueError("masked edits require PNG source and mask files")
+    width, height = struct.unpack(">II", data[16:24])
+    color_type = data[25]
+    has_alpha = color_type in {4, 6}
+    offset = 8
+    while offset + 12 <= len(data):
+        chunk_length = struct.unpack(">I", data[offset:offset + 4])[0]
+        chunk_end = offset + 12 + chunk_length
+        if chunk_end > len(data):
+            raise ValueError("masked edits require valid PNG source and mask files")
+        chunk_type = data[offset + 4:offset + 8]
+        if chunk_type == b"tRNS":
+            has_alpha = True
+        offset = chunk_end
+        if chunk_type == b"IEND":
+            break
+    return width, height, has_alpha
+
+
+def validate_edit_mask_bytes(source: bytes, mask: bytes) -> None:
+    source_width, source_height, _ = png_edit_metadata(source)
+    mask_width, mask_height, mask_has_alpha = png_edit_metadata(mask)
+    if (source_width, source_height) != (mask_width, mask_height):
+        raise ValueError(
+            "mask dimensions must match the primary image "
+            f"({mask_width}x{mask_height} != {source_width}x{source_height})"
+        )
+    if not mask_has_alpha:
+        raise ValueError("mask PNG must include an alpha channel")
 
 
 def collect_sources(image_url: str | None, reference_image_urls, *, max_refs: int) -> list[str]:

@@ -84,6 +84,7 @@ class BackgroundJobSpec:
     quality: str = "medium"
     image_url: str | None = None
     reference_image_urls: list[str] | None = None
+    mask_url: str | None = None
     input_fidelity: str | None = None
 
 
@@ -109,6 +110,7 @@ def normalize_jobs(args: dict[str, Any]) -> list[BackgroundJobSpec]:
             "quality": args.get("quality", "medium"),
             "image_url": args.get("image_url"),
             "reference_image_urls": args.get("reference_image_urls"),
+            "mask_url": args.get("mask_url"),
             "input_fidelity": args.get("input_fidelity"),
         }]
     if not isinstance(jobs, list) or not jobs:
@@ -133,6 +135,7 @@ def normalize_jobs(args: dict[str, Any]) -> list[BackgroundJobSpec]:
                 quality=str(item.get("quality") or "medium"),
                 image_url=item.get("image_url") or None,
                 reference_image_urls=[str(x) for x in refs] if refs else None,
+                mask_url=item.get("mask_url") or None,
                 input_fidelity=item.get("input_fidelity") or None,
             )
         )

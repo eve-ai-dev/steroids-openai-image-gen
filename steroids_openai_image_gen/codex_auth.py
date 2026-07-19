@@ -37,7 +37,15 @@ class CodexAuthClient:
     def available(self) -> bool:
         return bool(read_codex_access_token(self.config))
 
-    def generate(self, *, prompt: str, size: str, quality: str, sources: list[str] | None = None) -> dict[str, Any]:
+    def generate(
+        self,
+        *,
+        prompt: str,
+        size: str,
+        quality: str,
+        sources: list[str] | None = None,
+        input_fidelity: str | None = None,
+    ) -> dict[str, Any]:
         token = read_codex_access_token(self.config)
         if not token:
             raise RuntimeError("No Codex Auth token available. Run Hermes Codex/OpenAI auth setup first.")
@@ -49,7 +57,13 @@ class CodexAuthClient:
             )
             for ref in (sources or [])
         ]
-        payload = self._payload(prompt=prompt, size=size, quality=quality, image_data_uris=image_data_uris)
+        payload = self._payload(
+            prompt=prompt,
+            size=size,
+            quality=quality,
+            image_data_uris=image_data_uris,
+            input_fidelity=input_fidelity,
+        )
         headers = self._headers(token)
         timeout = httpx.Timeout(float(self.config.timeout_seconds), connect=30.0, read=float(self.config.timeout_seconds), write=30.0, pool=30.0)
         image_b64 = None
@@ -109,7 +123,15 @@ class CodexAuthClient:
         })
         return headers
 
-    def _payload(self, *, prompt: str, size: str, quality: str, image_data_uris: list[str]) -> dict[str, Any]:
+    def _payload(
+        self,
+        *,
+        prompt: str,
+        size: str,
+        quality: str,
+        image_data_uris: list[str],
+        input_fidelity: str | None = None,
+    ) -> dict[str, Any]:
         user_text = self._user_text(prompt=prompt, size=size, quality=quality, image_count=len(image_data_uris))
         content = []
         for uri in image_data_uris:
@@ -118,6 +140,10 @@ class CodexAuthClient:
         tool: dict[str, Any] = {"type": "image_generation", "output_format": "png"}
         if size and size != "auto":
             tool["size"] = size
+        if image_data_uris:
+            tool["action"] = "edit"
+        if input_fidelity in {"low", "high"}:
+            tool["input_fidelity"] = input_fidelity
         return {
             "model": _CODEX_CHAT_MODEL,
             "stream": True,

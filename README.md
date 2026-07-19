@@ -104,11 +104,20 @@ The plugin registers an enhanced `image_generate` schema:
   "aspect_ratio": "square",
   "quality": "medium",
   "image_url": "/path/source.png",
-  "reference_image_urls": ["/path/ref.png"]
+  "reference_image_urls": ["/path/ref.png"],
+  "mask_url": "/path/mask.png",
+  "input_fidelity": "high"
 }
 ```
 
-`input_fidelity` is exposed for forward compatibility but omitted/ignored for `gpt-image-2`.
+`mask_url` enables localized editing in `openai-compatible` mode. The primary
+source and mask must be same-size PNG files, and the mask must have an alpha
+channel; transparent pixels are editable and opaque pixels are preserved.
+Coordinates written in the prompt are only model instructions and do not form
+an edit boundary. Direct `codex-auth` mode rejects masks; use the
+OpenAI-compatible Spartan Route endpoint for masked Codex edits.
+
+`input_fidelity` accepts `low` or `high` and is forwarded on image edits.
 
 ## Background jobs
 

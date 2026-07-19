@@ -6,7 +6,7 @@ from typing import Any
 import requests
 
 from .config import SteroidsConfig
-from .refs import load_image_bytes
+from .refs import load_image_bytes, validate_edit_mask_bytes
 
 
 class OpenAICompatibleAPIError(RuntimeError):
@@ -51,39 +51,55 @@ class OpenAICompatibleClient:
         )
         return self._json_or_raise(response)
 
-    def edit(self, *, prompt: str, size: str, quality: str, sources: list[str]) -> dict[str, Any]:
+    def edit(
+        self,
+        *,
+        prompt: str,
+        size: str,
+        quality: str,
+        sources: list[str],
+        mask_url: str | None = None,
+        input_fidelity: str | None = None,
+    ) -> dict[str, Any]:
         files = []
-        opened = []
-        try:
-            for idx, ref in enumerate(sources):
-                data, mime, name = load_image_bytes(
-                    ref,
-                    max_bytes=self.config.max_image_bytes,
-                    allow_remote=self.config.allow_remote_images,
-                )
-                field = "image" if idx == 0 else "image[]"
-                files.append((field, (name, data, mime)))
-            data = {
-                "model": self.config.model,
-                "prompt": prompt,
-                "size": size,
-                "quality": quality,
-                "response_format": "b64_json",
-            }
-            response = requests.post(
-                f"{self.config.base_url}/images/edits",
-                data=data,
-                files=files,
-                headers=self._headers(),
-                timeout=self.config.timeout_seconds,
+        primary_data = None
+        for idx, ref in enumerate(sources):
+            image_data, mime, name = load_image_bytes(
+                ref,
+                max_bytes=self.config.max_image_bytes,
+                allow_remote=self.config.allow_remote_images,
             )
-            return self._json_or_raise(response)
-        finally:
-            for fp in opened:
-                try:
-                    fp.close()
-                except Exception:
-                    pass
+            if idx == 0:
+                primary_data = image_data
+            field = "image" if idx == 0 else "image[]"
+            files.append((field, (name, image_data, mime)))
+        if mask_url:
+            mask_data, mask_mime, mask_name = load_image_bytes(
+                mask_url,
+                max_bytes=self.config.max_image_bytes,
+                allow_remote=self.config.allow_remote_images,
+            )
+            if primary_data is None:
+                raise ValueError("mask_url requires image_url")
+            validate_edit_mask_bytes(primary_data, mask_data)
+            files.append(("mask", (mask_name, mask_data, mask_mime)))
+        data = {
+            "model": self.config.model,
+            "prompt": prompt,
+            "size": size,
+            "quality": quality,
+            "response_format": "b64_json",
+        }
+        if input_fidelity in {"low", "high"}:
+            data["input_fidelity"] = input_fidelity
+        response = requests.post(
+            f"{self.config.base_url}/images/edits",
+            data=data,
+            files=files,
+            headers=self._headers(),
+            timeout=self.config.timeout_seconds,
+        )
+        return self._json_or_raise(response)
 
     @staticmethod
     def _json_or_raise(response) -> dict[str, Any]:
