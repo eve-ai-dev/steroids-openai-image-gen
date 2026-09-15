@@ -4,5 +4,7 @@ description: "Hermes image generation provider for OpenAI-compatible endpoints a
 author: Alberto + Adan
 kind: backend
 provides_tools:
-  - image_generate
+  - steroids_image_generate
+  - image_generate_background
+  - image_generate_background_status
 provides_hooks: []

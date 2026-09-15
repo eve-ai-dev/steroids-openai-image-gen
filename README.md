@@ -5,7 +5,7 @@ Hermes image generation provider for two practical paths:
 1. `openai-compatible` — call any endpoint that implements OpenAI-compatible `/v1/images/generations` and `/v1/images/edits` routes.
 2. `codex-auth` — use Hermes' existing Codex/OpenAI OAuth token directly and call the Codex backend Responses image-generation flow.
 
-The plugin also overrides Hermes' `image_generate` tool schema so agents can pass `quality`, `image_url`, and `reference_image_urls` explicitly. It also exposes `image_generate_background` for slow/batch generations; background delivery uses Hermes' existing `process_registry.completion_queue` async-delegation route instead of private gateway adapter calls.
+The plugin also registers a `steroids_image_generate` tool (alongside Hermes' built-in `image_generate`) so agents can pass `quality`, `image_url`, and `reference_image_urls` explicitly. It also exposes `image_generate_background` for slow/batch generations; background delivery uses Hermes' existing `process_registry.completion_queue` async-delegation route instead of private gateway adapter calls.
 
 ## Install
 
@@ -96,7 +96,7 @@ image and records `actual_size`.
 
 ## Tool arguments
 
-The plugin registers an enhanced `image_generate` schema:
+The plugin registers an enhanced `steroids_image_generate` schema:
 
 ```json
 {
