@@ -9,7 +9,7 @@ from .background import BackgroundImageJobError, BackgroundImageJobRunner, get_j
 
 def _schema() -> dict[str, Any]:
     return {
-        "name": "image_generate",
+        "name": "steroids_image_generate",
         "description": (
             "Generate or edit images using the configured image backend. Supports text-to-image, "
             "image_url edits, reference_image_urls, and quality when the active provider supports them. "
@@ -134,7 +134,7 @@ def _status_handler(args=None, **kwargs) -> str:
 
 def register_image_generate_override(ctx) -> None:
     ctx.register_tool(
-        name="image_generate",
+        name="steroids_image_generate",
         toolset="image_gen",
         schema=_schema(),
         handler=_handler,
@@ -142,7 +142,6 @@ def register_image_generate_override(ctx) -> None:
         requires_env=[],
         description="Generate/edit images with quality and references",
         emoji="🎨",
-        override=True,
     )
     ctx.register_tool(
         name="image_generate_background",
