@@ -1,0 +1,22 @@
+# Proposal only. Do not submit until STATE.md release gates are satisfied.
+# Pin is the complete locally tested implementation, not this proposal commit.
+name: steroids-openai-image-gen
+repo: https://github.com/eve-ai-dev/steroids-openai-image-gen
+sha: 998a2f49fad5c0f3cfc47dec362f75359ca54e3c
+description: Advanced OpenAI-compatible and Codex image generation, edits, masks and supervised background jobs.
+maintainer: eve-ai-dev
+tier: community
+category: tools
+version: "0.2.0"
+known_issues:
+  - Requires current public signed-in request and calling-session-aware injection APIs; no released Hermes SemVer floor established.
+  - Background notification acceptance is not confirmed platform media delivery.
+  - Dependency installation and real generation/media acceptance remain incomplete for this proposal.
+capabilities:
+  provides_tools:
+    - steroids_image_generate
+    - steroids_image_generate_background
+    - steroids_image_generate_background_status
+  provides_hooks: []
+  provides_middleware: []
+  requires_env: []
