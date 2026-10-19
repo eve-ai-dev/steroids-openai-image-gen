@@ -1,0 +1,87 @@
+{
+  "ok": true,
+  "checks": [
+    {
+      "name": "manifest",
+      "ok": true,
+      "detail": "plugin.yaml parses"
+    },
+    {
+      "name": "manifest fields",
+      "ok": true,
+      "detail": "name, version, description present"
+    },
+    {
+      "name": "requires_hermes",
+      "ok": true,
+      "detail": "not declared"
+    },
+    {
+      "name": "config schema",
+      "ok": true,
+      "detail": "shape valid"
+    },
+    {
+      "name": "requires_env",
+      "ok": true,
+      "detail": "all entries UPPER_SNAKE"
+    },
+    {
+      "name": "loadable",
+      "ok": true,
+      "detail": "entry: __init__.py"
+    },
+    {
+      "name": "python dependencies",
+      "ok": true,
+      "detail": "3 requirements from pyproject"
+    },
+    {
+      "name": "capability probe",
+      "ok": true,
+      "detail": "register() ran in isolation"
+    },
+    {
+      "name": "declared tools",
+      "ok": true,
+      "detail": "matches registrations"
+    },
+    {
+      "name": "declared hooks",
+      "ok": true,
+      "detail": "matches registrations"
+    },
+    {
+      "name": "declared middleware",
+      "ok": true,
+      "detail": "matches registrations"
+    },
+    {
+      "name": "built-in tool collisions",
+      "ok": true,
+      "detail": "no collisions"
+    },
+    {
+      "name": "security scan",
+      "ok": true,
+      "detail": "safe"
+    },
+    {
+      "name": "no core override",
+      "ok": true,
+      "detail": "no runtime rebinds of Hermes core"
+    }
+  ],
+  "warnings": [],
+  "isolation": {
+    "verdict": "host",
+    "host_ready": true,
+    "reasons": [],
+    "notes": [],
+    "ctx_methods": [
+      "inject_message",
+      "register_image_gen_provider",
+      "register_tool"
+    ]
+  }
+}

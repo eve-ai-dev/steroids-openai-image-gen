@@ -6,20 +6,6 @@ import argparse, base64, json, os, time, urllib.request, urllib.error
 from pathlib import Path
 
 
-def proc_env_lookup(names: list[str]) -> dict[str, str]:
-    found = {}
-    for p in Path('/proc').glob('[0-9]*/environ'):
-        try:
-            for item in p.read_bytes().split(b'\0'):
-                if b'=' not in item: continue
-                k, v = item.split(b'=', 1)
-                ks = k.decode('utf-8', 'ignore')
-                if ks in names and ks not in found:
-                    found[ks] = v.decode('utf-8', 'ignore')
-        except Exception:
-            pass
-    return found
-
 
 def make_png(width=64, height=64):
     import struct, zlib
@@ -65,8 +51,8 @@ def main():
     ap.add_argument('--api-key-env', default='OPENAI_API_KEY')
     args=ap.parse_args()
     base=args.base_url.rstrip('/')
-    proc=proc_env_lookup([args.api_key_env])
-    key=os.environ.get(args.api_key_env) or proc.get(args.api_key_env)
+    from agent.secret_scope import get_secret
+    key=get_secret(args.api_key_env)
     if not key:
         print(json.dumps({'base_url':base,'model':args.model,'api_key_env':args.api_key_env,'fatal':'No API key found'}, indent=2)); return 2
     png=make_png()

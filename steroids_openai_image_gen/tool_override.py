@@ -1,4 +1,4 @@
-"""Enhanced image_generate tool schemas for refs, quality, and background jobs."""
+"""Namespaced advanced image tools; built-in tools remain untouched."""
 from __future__ import annotations
 
 import json
@@ -9,7 +9,7 @@ from .background import BackgroundImageJobError, BackgroundImageJobRunner, get_j
 
 def _schema() -> dict[str, Any]:
     return {
-        "name": "image_generate",
+        "name": "steroids_image_generate",
         "description": (
             "Generate or edit images using the configured image backend. Supports text-to-image, "
             "image_url edits, reference_image_urls, and quality when the active provider supports them. "
@@ -33,9 +33,10 @@ def _schema() -> dict[str, Any]:
 
 def _background_schema() -> dict[str, Any]:
     return {
-        "name": "image_generate_background",
+        "name": "steroids_image_generate_background",
         "description": (
-            "Queue one or more image jobs and deliver the images back to the originating chat when ready. "
+            "Queue image jobs and request a notification turn with media in the originating chat. "
+            "Host acceptance is not confirmed media delivery. "
             "Use for batches or slow images. Prefer delivery_mode=each. Max batch size is 4 unless configured otherwise."
         ),
         "parameters": {
@@ -77,7 +78,7 @@ def _background_schema() -> dict[str, Any]:
 
 def _status_schema() -> dict[str, Any]:
     return {
-        "name": "image_generate_background_status",
+        "name": "steroids_image_generate_background_status",
         "description": "Read the current status of a background image job by job_id.",
         "parameters": {
             "type": "object",
@@ -98,21 +99,13 @@ def _handler(args=None, **kwargs) -> str:
     return json.dumps(result, ensure_ascii=False)
 
 
-def _current_session_key() -> str:
-    try:
-        from tools.approval import get_current_session_key
-        key = get_current_session_key(default="")
-        return key if key != "default" else ""
-    except Exception:
-        return ""
-
-
-def _background_handler(args=None, **kwargs) -> str:
+def _background_handler(runner, args=None, **kwargs) -> str:
     payload = args if isinstance(args, dict) else {}
-    payload = {**kwargs, **payload}
+
     try:
-        runner = BackgroundImageJobRunner()
-        result = runner.create_jobs(payload, origin_session_key=_current_session_key())
+        if not runner.ctx.session_surface():
+            raise BackgroundImageJobError('background delivery requires a live calling session')
+        result = runner.create_jobs(payload, origin_session_key=None)
     except BackgroundImageJobError as exc:
         result = {"success": False, "status": "failed", "error": str(exc)}
     except Exception as exc:
@@ -122,7 +115,7 @@ def _background_handler(args=None, **kwargs) -> str:
 
 def _status_handler(args=None, **kwargs) -> str:
     payload = args if isinstance(args, dict) else {}
-    payload = {**payload, **kwargs}
+
     try:
         result = get_job_status(str(payload.get("job_id") or ""))
     except BackgroundImageJobError as exc:
@@ -132,9 +125,10 @@ def _status_handler(args=None, **kwargs) -> str:
     return json.dumps(result, ensure_ascii=False, indent=2)
 
 
-def register_image_generate_override(ctx) -> None:
+def register_image_tools(ctx) -> None:
+    runner = BackgroundImageJobRunner(ctx)
     ctx.register_tool(
-        name="image_generate",
+        name="steroids_image_generate",
         toolset="image_gen",
         schema=_schema(),
         handler=_handler,
@@ -142,20 +136,20 @@ def register_image_generate_override(ctx) -> None:
         requires_env=[],
         description="Generate/edit images with quality and references",
         emoji="🎨",
-        override=True,
+
     )
     ctx.register_tool(
-        name="image_generate_background",
+        name="steroids_image_generate_background",
         toolset="image_gen",
         schema=_background_schema(),
-        handler=_background_handler,
+        handler=lambda args, **kwargs: _background_handler(runner, args, **kwargs),
         check_fn=lambda: True,
         requires_env=[],
         description="Queue image jobs and deliver them back to chat when ready",
         emoji="🕒",
     )
     ctx.register_tool(
-        name="image_generate_background_status",
+        name="steroids_image_generate_background_status",
         toolset="image_gen",
         schema=_status_schema(),
         handler=_status_handler,

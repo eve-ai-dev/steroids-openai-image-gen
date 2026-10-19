@@ -1,11 +1,11 @@
 [project]
 name = "steroids-openai-image-gen"
-version = "0.1.0"
+version = "0.2.0"
 description = "Hermes image generation provider for OpenAI-compatible endpoints and Codex Auth"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
-dependencies = ["requests", "httpx"]
+dependencies = ["requests>=2.28,<3", "httpx>=0.24,<1", "Pillow>=9.1,<13"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

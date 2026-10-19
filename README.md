@@ -1,33 +1,26 @@
 # steroids-openai-image-gen
 
-Hermes image generation provider for two practical paths:
+Hermes provider `steroids-openai` and three advanced tools for generation, image edits, references, alpha masks, per-call quality and input fidelity. Built-in `image_generate` remains owned by Hermes and can still select this provider; advanced arguments use the namespaced tools.
 
-1. `openai-compatible` — call any endpoint that implements OpenAI-compatible `/v1/images/generations` and `/v1/images/edits` routes.
-2. `codex-auth` — use Hermes' existing Codex/OpenAI OAuth token directly and call the Codex backend Responses image-generation flow.
+## 0.2 migration (breaking tool names)
 
-The plugin also overrides Hermes' `image_generate` tool schema so agents can pass `quality`, `image_url`, and `reference_image_urls` explicitly. It also exposes `image_generate_background` for slow/batch generations; background delivery uses Hermes' existing `process_registry.completion_queue` async-delegation route instead of private gateway adapter calls.
+| Old plugin tool | New tool |
+| --- | --- |
+| `image_generate` override | `steroids_image_generate` |
+| `image_generate_background` | `steroids_image_generate_background` |
+| `image_generate_background_status` | `steroids_image_generate_background_status` |
 
-## Install
+There are no old-name shims. Remove the former `allow_tool_override` grant if it was only for this plugin. Change calls in your own prompts, saved workflows and installed external skills to the new names; this repository ships no skills and does not edit active external skills. Arguments are unchanged. `token_env` is removed: Codex sign-in is exclusively host-owned. Existing completed job JSON remains inspectable; old running/queued jobs become `interrupted` rather than pretending to resume. New jobs persist `status.json` and optional `result.json`, not fabricated delegation events.
 
-Clone/copy this repo into your Hermes plugin root, then enable it:
+## Installation and compatibility
 
-```bash
-cd "${HERMES_HOME:-$HOME/.hermes}/plugins"
-git clone https://github.com/eve-ai-dev/steroids-openai-image-gen.git
-hermes plugins enable steroids-openai-image-gen
-```
+Install this directory under the selected profile's `${HERMES_HOME}/plugins/steroids-openai-image-gen`, enable with `hermes plugins enable steroids-openai-image-gen`, then restart Hermes when authorized. `HERMES_HOME` already points at the selected profile: do not append another profiles directory.
 
-Restart Hermes/gateway after enabling.
+Requires Hermes with public `agent.secret_scope.get_secret`, `credentialed_provider_request`, `ctx.spawn_task`, `ctx.on_unload`, `ctx.session_surface` and **keyless calling-session-aware `ctx.inject_message`**. Tested against upstream source `2e83e2a935ee04f606aab58e498d34ca58d84c07`, not a claimed released SemVer floor. Older hosts need an upgrade; no internal compatibility adapter is provided. Actual generation and target-chat media delivery have not been accepted for this candidate. See STATE.md and .agents/validation.md before release.
 
-For profile-specific installs, use that profile's plugin root instead:
+Dependencies have bounded API-compatible ranges; install under Hermes's constraints. The existing uv.lock predates 0.2 and is not authoritative for installation until regenerated through the approved package-security path. No install workaround is supported.
 
-```bash
-cd "${HERMES_HOME:-$HOME/.hermes}/profiles/<profile>/plugins"
-```
-
-## Config: OpenAI-compatible endpoint mode
-
-Use this for OpenAI itself, a reverse proxy, or any provider that accepts OpenAI-style image routes.
+## Configuration
 
 ```yaml
 image_gen:
@@ -35,68 +28,23 @@ image_gen:
   model: gpt-image-2
   steroids-openai:
     mode: openai-compatible
-    base_url: ${OPENAI_BASE_URL}
+    base_url: https://api.openai.com/v1
     api_key_env: OPENAI_API_KEY
-    model: gpt-image-2
     quality: medium
     max_reference_images: 16
+plugins:
+  entries:
+    steroids-openai-image-gen:
+      allow_gateway_injection: true  # required for background notification turns
 ```
 
-Secrets stay in env. Non-secrets stay in YAML.
+Store `OPENAI_API_KEY` through Hermes's secret settings. The manifest declares it as an optional secret so Codex-only installations are not disabled. A custom `api_key_env` must also be declared as a secret in your reviewed manifest; prefer the declared default. Nested `${NAME}` expansion uses Hermes's profile-scoped secret resolver, never another profile's process credentials.
 
-The plugin sends:
+For Codex use `mode: codex-auth`. The manifest declares `requires_auth: [openai-codex]`. Hermes's public signed-in request API attaches the credential, owns refresh, restricts origins and refuses redirects. This plugin never reads or receives the Codex token and does not impersonate a vendor CLI. Codex's Responses SSE is buffered by the host API then parsed locally; no streaming preview is promised. Quality remains a prompt instruction in this route, not a guaranteed backend quality tier. Codex masks remain unsupported; use an OpenAI-compatible image-edit endpoint for masks. Output is padded/resized to the requested dimensions using Pillow when necessary; metadata records the original size. Real backend acceptance remains untested.
 
-- text-only: `POST {base_url}/images/generations`
-- edits/references: `POST {base_url}/images/edits` multipart with `image` for the primary source and `image[]` for extra refs
+## Advanced calls
 
-The plugin sends OpenAI-compatible `size` values for requested aspect ratios:
-`1536x1024` for landscape, `1024x1024` for square, and `1024x1536` for
-portrait. It does not silently downgrade non-square requests to square and does
-not post-process resize/crop images. If the configured backend returns an
-OpenAI-style error such as `invalid_image_size` or `codex_image_size_mismatch`,
-that error is surfaced to the caller.
-
-Expected response shape:
-
-```json
-{
-  "data": [
-    {
-      "b64_json": "...",
-      "revised_prompt": "optional",
-      "actual_size": "optional"
-    }
-  ]
-}
-```
-
-URL responses are also accepted and cached locally when possible.
-
-## Config: direct Codex Auth mode
-
-Use this for Hermes users who already have Codex/OpenAI OAuth configured and do not use an OpenAI-compatible image endpoint.
-
-```yaml
-image_gen:
-  provider: steroids-openai
-  model: gpt-image-2
-  steroids-openai:
-    mode: codex-auth
-    model: gpt-image-2
-    quality: medium
-    max_reference_images: 16
-```
-
-The plugin reads Hermes' Codex token via Hermes' internal Codex auth helper and
-sends a Responses-style request with the `image_generation` tool. It uses the
-same OpenAI-compatible `size` values listed above and verifies the returned
-bitmap aspect ratio when a concrete size was requested. If Codex Auth returns
-the requested aspect ratio at a different pixel scale, the response keeps the
-image and records `actual_size`.
-
-## Tool arguments
-
-The plugin registers an enhanced `image_generate` schema:
+Call `steroids_image_generate` with:
 
 ```json
 {
@@ -110,26 +58,18 @@ The plugin registers an enhanced `image_generate` schema:
 }
 ```
 
-`mask_url` enables localized editing in `openai-compatible` mode. The primary
-source and mask must be same-size PNG files, and the mask must have an alpha
-channel; transparent pixels are editable and opaque pixels are preserved.
-Coordinates written in the prompt are only model instructions and do not form
-an edit boundary. Direct `codex-auth` mode rejects masks; use the
-OpenAI-compatible Spartan Route endpoint for masked Codex edits.
+Aspect is `landscape`, `square` or `portrait`; default follows Hermes's provider default. Sizes default to 1536x1024, 1024x1024 and 1024x1536 respectively and can be configured under `sizes`. Quality is `low|medium|high|auto`; fidelity is `low|high`. Invalid controls fail before backend requests. `model: gpt-image-2` uses separate quality, not virtual model tier suffixes.
 
-`input_fidelity` accepts `low` or `high` and is forwarded on image edits.
+OpenAI-compatible text requests POST `/images/generations`; edits POST multipart `/images/edits` with primary `image`, extra `image[]`, optional `mask` and fidelity. The primary and alpha mask must be same-size PNGs; transparent mask pixels are editable. Prompt coordinates do not enforce a boundary. The endpoint must actually support this protocol. Errors and size rejection codes are surfaced, never silently downgraded to square. Responses accept `data[0].b64_json` or a URL cached locally when possible; `revised_prompt` and `actual_size` are retained.
 
-## Background jobs
+## Background work
 
-`image_generate_background` accepts the same image arguments plus either a single `prompt` or a `jobs` array. It requires a live originating Hermes session key (gateway or another runtime path that sets `tools.approval.get_current_session_key`). Jobs are persisted under `${HERMES_HOME}/steroids_openai_image_gen/jobs/<job_id>/` with `status.json`, optional `result.json`, and `delivery_event.json`.
+Call `steroids_image_generate_background` with the same arguments plus `delivery_mode: each|batch`, or a `jobs` array of individual argument objects. Omit `jobs` for a single prompt; `[]` plus a prompt is also a shortcut. Maximum batch defaults to 4 (`STEROIDS_IMAGE_BG_MAX_JOBS`, 1–32); one shared runner limits concurrency to 2 (`STEROIDS_IMAGE_BG_MAX_CONCURRENT`, 1–16). These are nonsecret process tuning values.
 
-When generation finishes, the worker enqueues a Hermes `async_delegation` completion event on `tools.process_registry.process_registry.completion_queue`. Hermes' gateway/CLI completion watcher routes that event back to the originating session; successful image results include a `MEDIA:<path>` line so platforms with native media support can attach the file. If the completion queue is unavailable, `status.json` records `delivery.status="failed"` and `delivery.error` instead of silently pretending delivery succeeded. Use `image_generate_background_status` with the returned `job_id` to inspect that state.
+The plugin maintains a lazy event-loop thread and uses `ctx.spawn_task` for supervised work. Session/profile context is captured at submission and propagated to workers. Unload cancels tasks and stops the loop. Already-running blocking HTTP may finish but will not deliver after cancellation. Restart does not retry jobs automatically: avoid duplicate paid work. Duplicate tool submissions are separate requests, not idempotent retries.
 
-## Compatibility notes
+Results live under the active profile's `steroids_openai_image_gen/jobs/<job_id>/`. Use `steroids_image_generate_background_status` with `job_id` to inspect them. Completion calls public `ctx.inject_message` with a `MEDIA:<path>` line. On messaging hosts the operator must permit gateway injection. `delivery.status=accepted` means only that the host accepted a notification turn; **it does not mean the model forwarded the image or that a platform delivered media**. `confirmed` remains false. Refusal is recorded as `failed`. Injection may cause a separately billed model turn. No private queue event or direct platform send is used.
 
-- Use `model: gpt-image-2`, not `gpt-image-2-medium`; quality is a separate parameter.
-- OpenAI-compatible edit endpoints should support multipart `image` + `image[]` and return `b64_json`.
-- When `image_generate_background` is used for the single-image shortcut, omit
-  `jobs`. If an empty `jobs: []` is sent with a top-level `prompt`, the plugin
-  treats it as the same shortcut.
-- Nested `${ENV_VAR}` values in this plugin's config are expanded by the plugin itself, because some Hermes versions do not expand nested plugin config before providers read it.
+## Risk disclosure
+
+Generation sends prompts and selected source/mask bytes to your configured image endpoint or ChatGPT Codex service. Remote source URLs and result URLs can cause HTTP downloads. Local source paths are read outside this repository when requested. Generated images and job records (including prompts, source paths and errors) persist in the active profile's data directory; apply your own retention policy. No telemetry, shell execution, self-update, credential-store reads or OAuth writes occur at runtime. Background notification is a model turn, not a guaranteed media transport. Scripts under `scripts/probe_*` make paid requests when explicitly run; they are not part of safe validation and must not be run without approval.

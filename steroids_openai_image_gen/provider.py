@@ -102,11 +102,13 @@ class SteroidsOpenAIImageGenProvider(ImageGenProvider):
         **kwargs: Any,
     ) -> dict[str, Any]:
         cfg = load_config()
-        prompt = (prompt or "").strip()
+        invalid = _invalid_request(prompt, aspect_ratio, quality, reference_image_urls)
+        if invalid:
+            return error_response(error=invalid, error_type="invalid_argument", provider=PROVIDER, model=cfg.model)
+        prompt = prompt.strip()
         aspect = resolve_aspect_ratio(aspect_ratio)
         selected_quality = (quality or cfg.quality or "medium").strip().lower()
-        if selected_quality not in {"low", "medium", "high", "auto"}:
-            selected_quality = cfg.quality
+
         size = cfg.sizes.get(aspect, cfg.sizes["square"])
         sources = collect_sources(image_url, reference_image_urls, max_refs=cfg.max_reference_images)
         selected_input_fidelity = input_fidelity.strip().lower() if isinstance(input_fidelity, str) else None
@@ -115,8 +117,6 @@ class SteroidsOpenAIImageGenProvider(ImageGenProvider):
         if mask_url and not image_url:
             return error_response(error="mask_url requires image_url", error_type="invalid_argument", provider=PROVIDER, model=cfg.model, aspect_ratio=aspect)
 
-        if not prompt:
-            return error_response(error="Prompt is required and must be a non-empty string", error_type="invalid_argument", provider=PROVIDER, model=cfg.model, aspect_ratio=aspect)
 
         try:
             if cfg.mode == "openai-compatible":
@@ -134,7 +134,7 @@ class SteroidsOpenAIImageGenProvider(ImageGenProvider):
             elif cfg.mode == "codex-auth":
                 client = CodexAuthClient(cfg)
                 if not client.available():
-                    return error_response(error="Codex Auth mode needs Hermes Codex/OpenAI auth token or configured token_env", error_type="auth_required", provider=PROVIDER, model=cfg.model, prompt=prompt, aspect_ratio=aspect)
+                    return error_response(error="Codex mode requires Hermes signed-in provider request support", error_type="auth_required", provider=PROVIDER, model=cfg.model, prompt=prompt, aspect_ratio=aspect)
                 if mask_url:
                     return error_response(error="mask_url requires openai-compatible mode", error_type="unsupported_endpoint", provider=PROVIDER, model=cfg.model, prompt=prompt, aspect_ratio=aspect)
                 payload = client.generate(
@@ -178,6 +178,18 @@ class SteroidsOpenAIImageGenProvider(ImageGenProvider):
             modality=modality,
             extra=extra,
         )
+
+
+def _invalid_request(prompt, aspect, quality, refs):
+    if not isinstance(prompt, str) or not prompt.strip():
+        return "Prompt is required and must be a non-empty string"
+    if aspect not in {'square', 'landscape', 'portrait'}:
+        return 'aspect_ratio must be square, landscape or portrait'
+    if quality is not None and quality not in {'low', 'medium', 'high', 'auto'}:
+        return 'quality must be low, medium, high or auto'
+    if refs is not None and (not isinstance(refs, list) or not all(isinstance(x, str) for x in refs)):
+        return 'reference_image_urls must be a list of strings'
+    return None
 
 
 def _save_payload_image(payload: dict[str, Any], *, prefix: str) -> tuple[str, str | None]:

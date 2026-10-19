@@ -7,7 +7,6 @@ import json
 import struct
 from typing import Any
 
-import httpx
 
 from .config import SteroidsConfig
 from .refs import load_image_as_data_uri
@@ -17,25 +16,14 @@ _CODEX_CHAT_MODEL = "gpt-5.5"
 _INSTRUCTIONS = "You are an image generation assistant."
 
 
-def read_codex_access_token(config: SteroidsConfig) -> str | None:
-    if config.token:
-        return config.token.strip()
-    try:
-        from agent.auxiliary_client import _read_codex_access_token
-        token = _read_codex_access_token()
-        if isinstance(token, str) and token.strip():
-            return token.strip()
-    except Exception:
-        return None
-    return None
-
-
 class CodexAuthClient:
     def __init__(self, config: SteroidsConfig):
         self.config = config
 
     def available(self) -> bool:
-        return bool(read_codex_access_token(self.config))
+        # Never resolve/refresh auth merely to list the provider.
+        from hermes_cli.plugin_provider_requests import credentialed_provider_request
+        return callable(credentialed_provider_request)
 
     def generate(
         self,
@@ -46,9 +34,7 @@ class CodexAuthClient:
         sources: list[str] | None = None,
         input_fidelity: str | None = None,
     ) -> dict[str, Any]:
-        token = read_codex_access_token(self.config)
-        if not token:
-            raise RuntimeError("No Codex Auth token available. Run Hermes Codex/OpenAI auth setup first.")
+        from hermes_cli.plugin_provider_requests import credentialed_provider_request
         image_data_uris = [
             load_image_as_data_uri(
                 ref,
@@ -64,27 +50,25 @@ class CodexAuthClient:
             image_data_uris=image_data_uris,
             input_fidelity=input_fidelity,
         )
-        headers = self._headers(token)
-        timeout = httpx.Timeout(float(self.config.timeout_seconds), connect=30.0, read=float(self.config.timeout_seconds), write=30.0, pool=30.0)
+        response = credentialed_provider_request(
+            "openai-codex", "POST", f"{_CODEX_BASE_URL}/responses", json=payload,
+            headers={"Accept": "text/event-stream", "Content-Type": "application/json"},
+            timeout=float(self.config.timeout_seconds),
+        )
+        if response.status >= 300:
+            raise RuntimeError(f"Codex Responses API HTTP {response.status}")
         image_b64 = None
         revised_prompt = None
-        with httpx.Client(timeout=timeout, headers=headers) as client:
-            with client.stream("POST", f"{_CODEX_BASE_URL}/responses", json=payload) as response:
-                try:
-                    response.raise_for_status()
-                except httpx.HTTPStatusError as exc:
-                    exc.response.read()
-                    raise RuntimeError(f"Codex Responses API HTTP {exc.response.status_code}: {exc.response.text[:800]}") from exc
-                for event in iter_sse_json(response):
-                    error = extract_error(event)
-                    if error:
-                        raise RuntimeError(error)
-                    found = extract_image_b64(event)
-                    if found:
-                        image_b64 = found
-                    prompt_found = extract_revised_prompt(event)
-                    if prompt_found:
-                        revised_prompt = prompt_found
+        for event in iter_sse_json(response.text.splitlines()):
+            error = extract_error(event)
+            if error:
+                raise RuntimeError(error)
+            found = extract_image_b64(event)
+            if found:
+                image_b64 = found
+            prompt_found = extract_revised_prompt(event)
+            if prompt_found:
+                revised_prompt = prompt_found
         if not image_b64:
             raise RuntimeError("Codex response contained no image_generation result")
         requested = requested_image_size(size)
@@ -108,20 +92,6 @@ class CodexAuthClient:
             item["revised_prompt"] = revised_prompt
         return {"data": [item]}
 
-    def _headers(self, token: str) -> dict[str, str]:
-        try:
-            from agent.auxiliary_client import _codex_cloudflare_headers
-            headers = _codex_cloudflare_headers(token)
-        except Exception:
-            headers = {}
-        headers.update({
-            "Accept": "text/event-stream",
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json",
-            "OpenAI-Beta": "responses=experimental",
-            "User-Agent": "codex_cli_rs/0.130.0 (steroids-openai-image-gen)",
-        })
-        return headers
 
     def _payload(
         self,
@@ -197,7 +167,7 @@ def iter_sse_json(response: Any):
             payload["type"] = event
         return payload
 
-    for line in response.iter_lines():
+    for line in response:
         if isinstance(line, bytes):
             line = line.decode("utf-8", "replace")
         line = str(line)

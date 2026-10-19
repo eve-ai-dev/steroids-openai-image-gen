@@ -20,22 +20,6 @@ PNG_1X1_RED = base64.b64decode(
 )
 
 
-def proc_env_lookup(names: list[str]) -> dict[str, str]:
-    found: dict[str, str] = {}
-    for proc in Path('/proc').glob('[0-9]*'):
-        try:
-            raw = (proc / 'environ').read_bytes()
-        except Exception:
-            continue
-        for item in raw.split(b'\0'):
-            if b'=' not in item:
-                continue
-            k, v = item.split(b'=', 1)
-            ks = k.decode('utf-8', 'ignore')
-            if ks in names and ks not in found:
-                found[ks] = v.decode('utf-8', 'ignore')
-    return found
-
 
 def request(method: str, url: str, key: str | None, *, json_body: Any = None, body: bytes | None = None, headers: dict[str, str] | None = None, timeout: int = 180) -> dict[str, Any]:
     h = {'Accept': 'application/json'}
@@ -112,8 +96,8 @@ def main() -> int:
     ap.add_argument('--timeout', type=int, default=180)
     args = ap.parse_args()
     base = args.base_url.rstrip('/')
-    proc = proc_env_lookup([args.api_key_env])
-    key = os.environ.get(args.api_key_env) or proc.get(args.api_key_env)
+    from agent.secret_scope import get_secret
+    key = get_secret(args.api_key_env)
     report: dict[str, Any] = {
         'base_url': base,
         'model': args.model,
@@ -122,7 +106,7 @@ def main() -> int:
         'tests': {},
     }
     if not key:
-        report['fatal'] = 'No API key found in current env or /proc for requested api-key-env.'
+        report['fatal'] = 'No scoped API key found for requested api-key-env.'
         print(json.dumps(report, indent=2))
         return 2
 

@@ -1,7 +1,7 @@
 """Configuration for steroids-openai-image-gen."""
 from __future__ import annotations
 
-import os
+
 import re
 from dataclasses import dataclass, field
 from typing import Any
@@ -15,7 +15,6 @@ class SteroidsConfig:
     mode: str = "openai-compatible"
     base_url: str = ""
     api_key_env: str = "OPENAI_API_KEY"
-    token_env: str = ""
     model: str = "gpt-image-2"
     quality: str = "medium"
     max_reference_images: int = 16
@@ -30,11 +29,8 @@ class SteroidsConfig:
 
     @property
     def api_key(self) -> str | None:
-        return os.environ.get(self.api_key_env) if self.api_key_env else None
-
-    @property
-    def token(self) -> str | None:
-        return os.environ.get(self.token_env) if self.token_env else None
+        from agent.secret_scope import get_secret
+        return get_secret(self.api_key_env) if self.api_key_env else None
 
 
 def _load_image_gen_config() -> dict[str, Any]:
@@ -56,7 +52,7 @@ def _coerce_int(value: Any, default: int, *, minimum: int = 1) -> int:
 
 
 def _expand_env(value: Any) -> Any:
-    """Expand ${VAR} config strings using the process env.
+    """Expand ${VAR} config strings using profile-scoped Hermes secrets.
 
     Hermes core does not currently expand nested plugin config values before
     plugins read them, so the plugin handles the standard YAML ${ENV_VAR}
@@ -65,7 +61,8 @@ def _expand_env(value: Any) -> Any:
     if not isinstance(value, str):
         return value
     def repl(match: re.Match[str]) -> str:
-        return os.environ.get(match.group(1), match.group(0))
+        from agent.secret_scope import get_secret
+        return get_secret(match.group(1)) or match.group(0)
     return re.sub(r"\$\{([^}]+)\}", repl, value)
 
 
@@ -122,7 +119,7 @@ def load_config() -> SteroidsConfig:
         mode=mode,
         base_url=_str(sub.get("base_url")).rstrip("/"),
         api_key_env=_str(sub.get("api_key_env"), "OPENAI_API_KEY"),
-        token_env=_str(sub.get("token_env")),
+
         model=model,
         quality=quality,
         max_reference_images=_coerce_int(sub.get("max_reference_images"), 16),

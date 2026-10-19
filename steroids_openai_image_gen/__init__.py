@@ -1,9 +1,9 @@
 """steroids-openai-image-gen Hermes plugin."""
 from .provider import SteroidsOpenAIImageGenProvider
-from .tool_override import register_image_generate_override
+from .tool_override import register_image_tools
 
 
 def register(ctx) -> None:
-    """Register provider and enhanced image_generate schema override."""
+    """Register provider and non-colliding advanced image tools."""
     ctx.register_image_gen_provider(SteroidsOpenAIImageGenProvider())
-    register_image_generate_override(ctx)
+    register_image_tools(ctx)
