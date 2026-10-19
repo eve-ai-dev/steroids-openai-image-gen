@@ -12,6 +12,9 @@ from agent.secret_scope import set_secret_scope, reset_secret_scope, set_multipl
 from steroids_openai_image_gen import register
 from steroids_openai_image_gen.background import BackgroundImageJobRunner, BackgroundImageJobError, get_job_status
 from steroids_openai_image_gen.config import SteroidsConfig
+from steroids_openai_image_gen.background import SessionOwner
+
+OWNER = SessionOwner('synthetic-session', 'synthetic-id')
 
 
 @pytest.fixture
@@ -56,7 +59,7 @@ def test_scoped_secret_does_not_inherit_other_profile(monkeypatch):
 def wait_for_status(job_id, predicate):
     deadline = time.monotonic() + 5
     while time.monotonic() < deadline:
-        state = get_job_status(job_id)
+        state = get_job_status(job_id, owner=OWNER)
         if predicate(state):
             return state
         time.sleep(.01)
@@ -75,7 +78,7 @@ def test_public_spawn_and_injection_receipt(context, monkeypatch, delivery_mode,
                         lambda: SimpleNamespace(generate=lambda **kw: {'success': True, 'image': str(image)}))
     runner = BackgroundImageJobRunner(ctx)
     try:
-        result = runner.create_jobs({'jobs': [{'prompt': 'a'}, {'prompt': 'b'}], 'delivery_mode': delivery_mode}, 'synthetic-session')
+        result = runner.create_jobs({'jobs': [{'prompt': 'a'}, {'prompt': 'b'}], 'delivery_mode': delivery_mode}, OWNER)
         states = [wait_for_status(j['job_id'], lambda s: s['status']['delivery']['status'] != 'pending') for j in result['jobs']]
         assert len(notifications) == expected_notifications
         assert all(n['session_key'] == 'synthetic-session' for n in notifications)
@@ -99,10 +102,10 @@ def test_unload_cancels_without_notification(context, monkeypatch):
     try:
         with pytest.raises(BackgroundImageJobError):
             runner.create_jobs({'prompt': 'x'}, '')
-        result = runner.create_jobs({'prompt': 'x'}, 'synthetic-session')
+        result = runner.create_jobs({'prompt': 'x'}, OWNER)
         assert started.wait(3)
         manager.unload(ctx.manifest)
-        assert get_job_status(result['jobs'][0]['job_id'])['status']['status'] == 'cancelled'
+        assert get_job_status(result['jobs'][0]['job_id'], OWNER)['status']['status'] == 'cancelled'
     finally:
         release.set()
         runner.close()
@@ -130,7 +133,7 @@ def test_codex_buffered_sse_preserves_result(monkeypatch):
     assert 'Authorization' not in captured[0][1]['headers']
 
 
-def test_keyless_injection_carries_calling_session_after_return(context, monkeypatch):
+def test_explicit_injection_carries_captured_session_after_return(context, monkeypatch):
     from gateway.session_context import scoped_session_key
     ctx, manager = context
     received = []
@@ -145,12 +148,12 @@ def test_keyless_injection_carries_calling_session_after_return(context, monkeyp
     runner = BackgroundImageJobRunner(ctx)
     try:
         with scoped_session_key('synthetic-origin-A'):
-            result = runner.create_jobs({'prompt': 'x'}, None)
+            result = runner.create_jobs({'prompt': 'x'}, OWNER)
         with scoped_session_key('synthetic-other-B'):
             release.set()
             state = wait_for_status(result['jobs'][0]['job_id'], lambda s: s['status']['delivery']['status'] == 'accepted')
-        assert received[0]['keyless'] is True
-        assert received[0]['calling_session_key'] == 'synthetic-origin-A'
+        assert not received[0].get('keyless')
+        assert received[0]['session_key'] == OWNER.session_key
         assert state['status']['delivery']['confirmed'] is False
     finally:
         release.set()
@@ -161,10 +164,10 @@ def test_restart_marks_unfinished_job_interrupted(context):
     ctx, manager = context
     path = manager.home_path / 'steroids_openai_image_gen/jobs/img_20260101_010101_abcdef'
     path.mkdir(parents=True)
-    (path / 'status.json').write_text(json.dumps({'status': 'running', 'instance': 'old-process'}))
-    assert get_job_status(path.name)['status']['status'] == 'interrupted'
+    (path / 'status.json').write_text(json.dumps({'status': 'running', 'instance': 'old-process', 'owner': {'session_key': OWNER.session_key, 'session_id': OWNER.session_id}}))
+    assert get_job_status(path.name, OWNER)['status']['status'] == 'interrupted'
     with pytest.raises(BackgroundImageJobError, match='invalid job_id'):
-        get_job_status('../../config.yaml')
+        get_job_status('../../config.yaml', OWNER)
 
 
 def test_public_injection_without_host_is_not_delivery(context):

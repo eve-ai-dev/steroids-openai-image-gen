@@ -23,6 +23,22 @@ class BackgroundImageJobError(Exception):
     """Expected job failure."""
 
 
+@dataclass(frozen=True)
+class SessionOwner:
+    session_key: str
+    session_id: str
+
+
+def calling_owner():
+    # Documented plugin guide: read HERMES_SESSION_* with get_session_env.
+    from gateway.session_context import get_session_env
+    owner = SessionOwner(get_session_env('HERMES_SESSION_KEY', ''),
+                         get_session_env('HERMES_SESSION_ID', ''))
+    if not owner.session_key or not owner.session_id:
+        raise BackgroundImageJobError('background jobs require a calling session key and id')
+    return owner
+
+
 def _now_iso():
     return datetime.now(timezone.utc).isoformat()
 
@@ -106,7 +122,7 @@ def format_failure_message(job_id, error, error_type=None):
 class BackgroundImageJobRunner:
     def __init__(self, ctx):
         self.ctx = ctx
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._loop = None
         self._thread = None
         self._closed = False
@@ -125,31 +141,63 @@ class BackgroundImageJobRunner:
                 self._thread.start()
             return self._loop
 
-    def create_jobs(self, args, origin_session_key):
-        if origin_session_key == '':
-            raise BackgroundImageJobError('background delivery requires an originating session key')
+    def create_jobs(self, args, owner):
+        if not isinstance(owner, SessionOwner) or not owner.session_key or not owner.session_id:
+            raise BackgroundImageJobError('background jobs require a calling session key and id')
         specs = normalize_jobs(args)
         mode = args.get('delivery_mode', 'each')
         if mode not in {'each', 'batch'}:
             raise BackgroundImageJobError('delivery_mode must be each or batch')
-        loop = self._ensure_loop()
+        # Admission, durable writes and task acquisition serialize with close.
+        with self._lock:
+            loop = self._ensure_loop()
+            if self._closed:
+                raise BackgroundImageJobError('runner unloaded')
+            return self._admit(loop, specs, owner, mode)
+
+    def _admit(self, loop, specs, owner, mode):
         paths = []
-        for spec in specs:
-            job_id = 'img_' + datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S_') + os.urandom(6).hex()
-            path = jobs_root() / job_id
-            _json_write(path / 'status.json', {'job_id': job_id, 'spec': asdict(spec),
-                        'origin_session_key': origin_session_key, 'created_at': _now_iso(),
-                        'status': 'queued', 'instance': _INSTANCE, 'delivery': {'status': 'pending'}})
-            paths.append(path)
-        # Scheduling and to_thread preserve the caller's profile/secret contextvars.
-        future = asyncio.run_coroutine_threadsafe(self._schedule(paths, origin_session_key, mode), loop)
-        future.result(timeout=10)
+        coroutine = None
+        try:
+            self._persist_jobs(specs, owner, paths)
+            coroutine = self._schedule(paths, owner.session_key, mode)
+            future = asyncio.run_coroutine_threadsafe(coroutine, loop)
+            # _schedule does not suspend; wait for host ownership, not generation.
+            future.result()
+        except Exception as exc:
+            if coroutine is not None:
+                coroutine.close()
+            self._fail_admission(paths, exc)
+            return {'success': False, 'error': f'Job submission failed: {exc}',
+                    'jobs': [{'job_id': p.name, 'status': 'failed'} for p in paths]}
         return {'success': True, 'mode': 'async', 'count': len(paths),
                 'jobs': [{'job_id': p.name, 'status': 'queued'} for p in paths]}
 
+    def _persist_jobs(self, specs, owner, paths):
+        for spec in specs:
+            job_id = 'img_' + datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S_') + os.urandom(6).hex()
+            path = jobs_root() / job_id
+            paths.append(path)
+            _json_write(path / 'status.json', {'job_id': job_id, 'spec': asdict(spec),
+                        'owner': asdict(owner), 'origin_session_key': owner.session_key, 'created_at': _now_iso(),
+                        'status': 'queued', 'instance': _INSTANCE, 'delivery': {'status': 'pending'}})
+
+    def _fail_admission(self, paths, exc):
+        for path in paths:
+            state = _read_json(path / 'status.json') if (path / 'status.json').exists() else {'job_id': path.name}
+            state.update(status='failed', ended_at=_now_iso(), error=f'Submission failed: {exc}',
+                         delivery={'status': 'failed', 'confirmed': False})
+            _json_write(path / 'status.json', state)
+
     async def _schedule(self, paths, key, mode):
-        self.ctx.spawn_task(self._batch(paths, key, mode), name='steroids-image-batch')
-        # Close our loop before the host disposes its task lease across threads.
+        coroutine = self._batch(paths, key, mode)
+        try:
+            self.ctx.spawn_task(coroutine, name='steroids-image-batch')
+        except Exception:
+            coroutine.close()
+            raise
+        # Reverse-order teardown: close cancels on the owning loop before the
+        # host disposes its task lease from the unloading thread.
         self.ctx.on_unload(self.close)
 
     async def _batch(self, paths, key, mode):
@@ -192,8 +240,7 @@ class BackgroundImageJobRunner:
     def _notify(self, paths, key, message):
         error = None
         try:
-            accepted = (self.ctx.inject_message(message, session_key=key) if key
-                        else self.ctx.inject_message(message))
+            accepted = self.ctx.inject_message(message, session_key=key)
         except Exception as exc:
             accepted, error = False, str(exc)
         for path in paths:
@@ -207,26 +254,28 @@ class BackgroundImageJobRunner:
         with self._lock:
             self._closed = True
             loop, thread = self._loop, self._thread
-        if loop is not None and loop.is_running():
-            async def cancel():
-                tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
-                for task in tasks:
-                    task.cancel()
-                await asyncio.gather(*tasks, return_exceptions=True)
-            asyncio.run_coroutine_threadsafe(cancel(), loop).result(timeout=10)
-            loop.call_soon_threadsafe(loop.stop)
-            if thread is not None:
-                thread.join(timeout=10)
-            loop.close()
+            if loop is not None and loop.is_running():
+                async def cancel():
+                    tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+                    for task in tasks:
+                        task.cancel()
+                    await asyncio.gather(*tasks, return_exceptions=True)
+                asyncio.run_coroutine_threadsafe(cancel(), loop).result(timeout=10)
+                loop.call_soon_threadsafe(loop.stop)
+                if thread is not None:
+                    thread.join(timeout=10)
+                loop.close()
 
 
-def get_job_status(job_id):
+def get_job_status(job_id, owner):
     if not re.fullmatch(r'img_[0-9]{8}_[0-9]{6}_[0-9a-f]{6,12}', job_id):
         raise BackgroundImageJobError('invalid job_id')
     path = jobs_root() / job_id
     if not (path / 'status.json').is_file():
         raise BackgroundImageJobError(f'job not found: {job_id}')
     state = _read_json(path / 'status.json')
+    if not isinstance(owner, SessionOwner) or not owner.session_key or not owner.session_id or state.get('owner') != asdict(owner):
+        raise BackgroundImageJobError('job is not owned by the calling session; ownerless legacy records require operator filesystem inspection')
     if state.get('instance') != _INSTANCE and state['status'] in {'queued', 'running'}:
         state.update(status='interrupted', error='Runtime restarted; job is not automatically retried.')
     return {'success': True, 'job_id': job_id, 'status': state,

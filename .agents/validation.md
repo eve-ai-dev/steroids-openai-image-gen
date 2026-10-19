@@ -11,14 +11,15 @@ export UPSTREAM=/opt/data/profiles/builder/cache/scratch/node-search-upstream-sl
 export PYTHONDONTWRITEBYTECODE=1
 export PYTHONPATH=$UPSTREAM:/opt/hermes
 mkdir -p cache
-/opt/hermes/.venv/bin/python -m pytest -q --basetemp=cache/pytest
+/opt/hermes/.venv/bin/python -m pytest -q --basetemp=cache/pytest -W error::RuntimeWarning
 /opt/hermes/.venv/bin/python .agents/validate_admission.py
-git diff --check
+git diff d77ba961bcf6547d27c8c5cf498f5b5742fcd675 --check
 ```
 
-Expected: tests pass; actual PluginContext registers provider and all three namespaced tools without modifying built-ins; scoped secrets cannot inherit a foreign profile key; real signed-in helper rejects untrusted origin before auth/network; supervised background tasks survive tool return, preserve originating context, distinguish each/batch notification, record refusal, cancel on actual manager unload, and report interrupted jobs after restart. Synthetic bytes/results and host test injectors prove these local boundaries, not paid generation or real platform media transport. Old queue-event/parser tests were removed with their private implementation; new boundary tests replace that protection rather than retaining fabricated events.
+Expected: tests pass; actual PluginContext registers provider and all three namespaced tools without modifying built-ins; scoped secrets cannot inherit a foreign profile key; real signed-in helper rejects untrusted origin before auth/network; supervised background tasks survive tool return, preserve originating context, distinguish each/batch notification, record refusal, cancel on actual manager unload, and report interrupted jobs after restart.
+Session/lifecycle regressions in tests/test_session_lifecycle.py dispatch registered tools against actual upstream keyed local/messaging policy, refuse cross-session/replaced-id/ownerless reads, reproduce close immediately after loop acquisition, force enqueue and spawn rejection, and overlap admission with concurrent close/unload. Run with `-W error::RuntimeWarning` to reject coroutine leaks. Tests use synthetic session authorities and transports, never a live gateway. The documented session reader triggers an upstream admission allowlist warning; see outputs/session-lifecycle-evidence.md for the primary-source contract, not a suppression or private adapter. Synthetic bytes/results and host test injectors prove these local boundaries, not paid generation or real platform media transport. Old queue-event/parser tests were removed with their private implementation; new boundary tests replace that protection rather than retaining fabricated events.
 
-Admission script invokes current upstream `validate_plugin_dir`: manifest/capability parity, no collisions, security scan and no core rebinding. Expected ok and no private imports. It does NOT install dependencies. `--install-deps` is blocked pending changed security-service evidence/approval following prior OSV/deps.dev/ecosyste.ms timeouts; do not repeat equivalent blocked installation.
+Admission script invokes current upstream `validate_plugin_dir`: manifest/capability parity, no collisions, security scan and no core rebinding. Expected ok; the single documented-session-reader allowlist warning must be reviewed against the cited public contract. It does NOT install dependencies. `--install-deps` is blocked pending changed security-service evidence/approval following prior OSV/deps.dev/ecosyste.ms timeouts; do not repeat equivalent blocked installation.
 
 ## Deterministic changed-code quality
 

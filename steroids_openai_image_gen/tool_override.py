@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from .background import BackgroundImageJobError, BackgroundImageJobRunner, get_job_status
+from .background import BackgroundImageJobError, BackgroundImageJobRunner, calling_owner, get_job_status
 
 
 def _schema() -> dict[str, Any]:
@@ -105,7 +105,7 @@ def _background_handler(runner, args=None, **kwargs) -> str:
     try:
         if not runner.ctx.session_surface():
             raise BackgroundImageJobError('background delivery requires a live calling session')
-        result = runner.create_jobs(payload, origin_session_key=None)
+        result = runner.create_jobs(payload, calling_owner())
     except BackgroundImageJobError as exc:
         result = {"success": False, "status": "failed", "error": str(exc)}
     except Exception as exc:
@@ -117,7 +117,7 @@ def _status_handler(args=None, **kwargs) -> str:
     payload = args if isinstance(args, dict) else {}
 
     try:
-        result = get_job_status(str(payload.get("job_id") or ""))
+        result = get_job_status(str(payload.get("job_id") or ""), calling_owner())
     except BackgroundImageJobError as exc:
         result = {"success": False, "status": "failed", "error": str(exc)}
     except Exception as exc:
