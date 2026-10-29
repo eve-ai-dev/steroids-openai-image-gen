@@ -1,5 +1,5 @@
 name: steroids-openai-image-gen
-version: "0.2.0"
+version: "1.0.0"
 description: "Hermes image endpoint provider with edits, references, quality and supervised background jobs."
 author: Alberto + Adan
 kind: backend

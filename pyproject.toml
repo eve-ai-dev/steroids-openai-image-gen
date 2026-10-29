@@ -1,6 +1,6 @@
 [project]
 name = "steroids-openai-image-gen"
-version = "0.2.0"
+version = "1.0.0"
 description = "Hermes image generation provider for OpenAI-compatible endpoints and Codex Auth"
 readme = "README.md"
 requires-python = ">=3.10"

@@ -33,7 +33,9 @@ External canonical dependency: Builder Assurance 1.1.0, natively discovered pack
 
 Expected `QUALITY_PASS`, no exception; existing nonworsened debt remains visible. Task starting HEAD is separately `115868605716be75c86ee7b438f7e95367590e9f`. Quality is not endpoint, media or release acceptance.
 
-## Still parent-owned / incomplete
+## Release disposition and remaining operator work
+
+For 1.0.0 the maintainer explicitly accepts the known mask defect as deferred, reports a passing generation/async-edit/status smoke test, and authorizes publication. The independent source review is complete. Earlier task-only authority statements below describe the recovery assignment, not a prohibition on this separately authorized release. Successful automatic image attachment delivery and multi-profile activation remain open.
 
 - Upstream/account/billing ownership is unverified, but earlier metadata is not a functional blocker: approved managed gpt-image-2 generation and reference edit have real PNG/visual evidence. No openai/* or guessed Codex fallback.
 - Three authorized live edit POSTs: reference edit low landscape passes PNG/dimensions/visual check; high square masked edit and one explicit corrected source-RGB mask probe return PNG but fail visual acceptance with black mask-region rectangles. Raw task receipts live-*-fixed.json and live-masked-edit-source-rgb.json. Parent must disposition masked functionality; no automatic retries.

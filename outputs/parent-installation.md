@@ -1,6 +1,6 @@
 # Parent-only installation / rollback delta
 
-**Prepared, not executed; no activation permission granted here.** Real approved managed calls now demonstrate `gpt-image-2` generation and multi-reference editing. Earlier catalog/openapi metadata is not a functional route blocker and does not prove upstream/account/billing ownership. Masked POSTs succeed as transport but visual acceptance remains failed (black transparent-region artifacts); parent must resolve or explicitly disposition this limitation before claiming full functionality. Redacted receipts: `../tasks/recover-current-hermes/evidence/live-*-fixed.json` and `live-masked-edit-source-rgb.json`.
+**Recovery preparation record, not current deployment state.** Subsequent operator authorization enabled default; work activation hit native dependency admission, and remaining profile installs are unconfirmed. Do not replay blindly. The operator accepted the mask limitation for 1.0.0; this document grants no new runtime permission. Real approved managed calls now demonstrate `gpt-image-2` generation and multi-reference editing. Earlier catalog/openapi metadata is not a functional route blocker and does not prove upstream/account/billing ownership. Masked POSTs succeed as transport but visual acceptance remains failed (black transparent-region artifacts); parent must resolve or explicitly disposition this limitation before claiming full functionality. Redacted receipts: `../tasks/recover-current-hermes/evidence/live-*-fixed.json` and `live-masked-edit-source-rgb.json`.
 
 ## Resolve before activation
 
