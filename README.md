@@ -4,7 +4,7 @@ Hermes provider `steroids-openai` and three namespaced advanced tools. Preserves
 
 ## Current-Hermes candidate, not deployed
 
-Locally validated against installed Hermes upstream revision `e8c97320ac8691d4de92af49f98459f9ef9ddb08`, without upgrading or patching Hermes. See `STATE.md` and `.agents/validation.md` for actual evidence and remaining gates. A protocol-compatible endpoint is **not** an OpenAI upstream selection and is **not** proof of Codex ownership. No accepted managed Codex image route is established yet; do not use the advertised `openai/gpt-image-2` or bare alias as a supposed Codex fallback. No paid calls or live messages were made for recovery.
+Locally validated against installed Hermes upstream revision `e8c97320ac8691d4de92af49f98459f9ef9ddb08`, without upgrading or patching Hermes. See `STATE.md` and `.agents/validation.md` for actual evidence and remaining gates. A protocol-compatible endpoint is **not** an OpenAI upstream selection and is **not** proof of Codex ownership. The approved managed `OPENAI_BASE_URL` + scoped `OPENAI_API_KEY`, model `gpt-image-2`, has now returned real generation and reference-edit PNGs. Earlier route metadata is not a functional blocker. Upstream/account/billing ownership remains unverified; do not infer it from protocol or use `openai/*`/guessed aliases as fallback. Authorized masked-edit POSTs returned PNGs but failed visual acceptance (black mask-region artifacts); masked functionality remains unaccepted. No live messages or deployment were performed in this repair.
 
 The maintained compatible transport requires an endpoint supporting JSON `/images/generations` and multipart `/images/edits`. GPT Image payloads omit `response_format`; the client does not retry a failed paid request or follow image-POST redirects. The native Codex image backend instead uses a different JSON-edit protocol. Do not select that protocol without approved endpoint-contract evidence.
 
@@ -14,12 +14,12 @@ The maintained compatible transport requires an endpoint supporting JSON `/image
 
 Place a reviewed source export under the selected home's `plugins/steroids-openai-image-gen`; `HERMES_HOME` already identifies the profile home. Native plugin enable/reload is a separate authorized parent operation. Current Hermes supports plugin reload; a restart is not assumed. Tools/prompts become visible on a fresh session. Detailed exact merge delta, admission, reload and rollback steps: `outputs/parent-installation.md`. This candidate does not modify active homes.
 
-After the parent establishes the exact Codex-owned endpoint/model and compatible image protocol, merge (do not overwrite unrelated config):
+For parent-owned activation of the tested managed compatible endpoint, merge (do not overwrite unrelated config); this example is not activation permission:
 
 ```yaml
 image_gen:
   provider: steroids-openai
-  model: <verified-exact-image-model-id>
+  model: gpt-image-2
   steroids-openai:
     mode: openai-compatible
     base_url: ${OPENAI_BASE_URL}
@@ -32,7 +32,7 @@ plugins:
       allow_gateway_injection: true
 ```
 
-The model placeholder is deliberately **not executable configuration**. The key name refers to Hermes's approved managed layer, not OpenAI billing selection. Do not copy `.env`, tokens or credentials. The plugin uses public profile-scoped `agent.secret_scope.get_secret`; nested `${NAME}` resolution preserves that scope. No `CUSTOM_1_API_KEY` is introduced. Manifest declares the endpoint key as an optional secret. Add `image_gen` to the existing platform toolsets while retaining existing entries; provider registration alone does not expose advanced tools on Discord.
+The model is the exact live-tested selector, not proof of upstream ownership. The key name refers to Hermes's approved managed layer, not OpenAI billing selection. Do not copy `.env`, tokens or credentials. The plugin uses public profile-scoped `agent.secret_scope.get_secret`; nested `${NAME}` resolution preserves that scope. No `CUSTOM_1_API_KEY` is introduced. Manifest declares the endpoint key as an optional secret. Add `image_gen` to the existing platform toolsets while retaining existing entries; provider registration alone does not expose advanced tools on Discord.
 
 Dependencies have bounded ranges. Reuse approved installed versions when satisfied. Historical `uv.lock` is stale, not authoritative for this candidate; installation/lock changes require the approved package-security route, not an environment-copy workaround.
 
@@ -52,14 +52,13 @@ Old unprefixed plugin overrides have no shims. Remove an old override grant only
   "quality": "medium",
   "image_url": "/path/source.png",
   "reference_image_urls": ["/path/ref.png"],
-  "mask_url": "/path/mask.png",
-  "input_fidelity": "high"
+  "mask_url": "/path/mask.png"
 }
 ```
 
-Aspect: `landscape|square|portrait`, default follows Hermes provider default; standard sizes 1536x1024, 1024x1024, 1024x1536, configurable under `sizes`. Quality: `low|medium|high|auto`; fidelity: `low|high`. Invalid controls fail before backend calls. Model and quality are separate controls.
+Aspect: `landscape|square|portrait`, default follows Hermes provider default; standard sizes 1536x1024, 1024x1024, 1024x1536, configurable under `sizes`. Quality: `low|medium|high|auto`; configurable fidelity: `low|high` on supporting models only. Exact `gpt-image-2` does **not** support `input_fidelity`: omit it. Explicit requests fail locally with `invalid_input_fidelity_model`, never silently dropped or retried; capabilities report false. Inherent backend fidelity is not configurable fidelity support. Invalid controls fail before backend calls. Model and quality are separate controls.
 
-Edits send primary `image`, extra `image[]`, optional `mask` and fidelity. Source and alpha mask must be same-size PNGs; transparent pixels are editable. Prompt coordinates alone do not enforce boundaries. The total source count includes the primary image and defaults to 16; overflow is an explicit error, never silent truncation. Reference bytes default to 25 MiB each; local reads apply native credential-file protection, remote reads apply native URL/website/redirect policy and streaming limits, base64 decoding is bounded. `allow_remote_images: false` disables remote inputs.
+Edits send `image` for a single source, repeated `image[]` for all sources when multiple, plus optional `mask` and supported fidelity. Source and alpha mask must be same-size PNGs; transparent pixels designate editable regions in the protocol. Current managed gpt-image-2 live masks produced black rectangles matching transparent regions, including a corrected source-RGB mask probe; do not claim reliable localized editing or exact outside-mask preservation on this endpoint. Prompt coordinates alone do not enforce boundaries. The total source count includes the primary image and defaults to 16; overflow is an explicit error, never silent truncation. Reference bytes default to 25 MiB each; local reads apply native credential-file protection, remote reads apply native URL/website/redirect policy and streaming limits, base64 decoding is bounded. `allow_remote_images: false` disables remote inputs.
 
 Backend errors/size rejection are surfaced without silently changing aspect or retrying. Responses accept `data[0].b64_json` or URL, retaining revised prompt and actual size when available. A response URL is not independently confirmed media delivery.
 

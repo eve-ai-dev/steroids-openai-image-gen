@@ -147,7 +147,7 @@ def test_openai_compatible_edit_sends_mask_and_input_fidelity(tmp_path, monkeypa
         return Response()
 
     monkeypatch.setattr('steroids_openai_image_gen.openai_compatible.requests.post', fake_post)
-    client = OpenAICompatibleClient(SteroidsConfig(base_url='http://route.test/v1'))
+    client = OpenAICompatibleClient(SteroidsConfig(base_url='http://route.test/v1', model='gpt-image-1'))
 
     client.edit(
         prompt='repair only the transparent region',
@@ -246,7 +246,7 @@ def test_provider_forwards_mask_and_reports_image_modality(monkeypatch):
             self.calls.append(kwargs)
             return {'data': [{'b64_json': 'abc'}]}
 
-    monkeypatch.setattr(p, 'load_config', lambda: SteroidsConfig(base_url='http://route.test/v1'))
+    monkeypatch.setattr(p, 'load_config', lambda: SteroidsConfig(base_url='http://route.test/v1', model='gpt-image-1'))
     monkeypatch.setattr(p, 'OpenAICompatibleClient', Client)
     monkeypatch.setattr(p, 'save_b64_image', lambda b64, prefix: '/tmp/fake.png')
 

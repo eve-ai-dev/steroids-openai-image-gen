@@ -83,7 +83,7 @@ class SteroidsOpenAIImageGenProvider(ImageGenProvider):
             "max_reference_images": cfg.max_reference_images,
             "supports_quality": True,
             "quality_values": ["low", "medium", "high", "auto"],
-            "supports_input_fidelity": True,
+            "supports_input_fidelity": cfg.model != "gpt-image-2",
             "mode": cfg.mode,
         }
 
@@ -111,6 +111,8 @@ class SteroidsOpenAIImageGenProvider(ImageGenProvider):
         selected_input_fidelity = input_fidelity.strip().lower() if isinstance(input_fidelity, str) else None
         if selected_input_fidelity not in {None, "low", "high"}:
             return error_response(error="input_fidelity must be low or high", error_type="invalid_argument", provider=PROVIDER, model=cfg.model, aspect_ratio=aspect)
+        if selected_input_fidelity is not None and cfg.model == "gpt-image-2":
+            return error_response(error="gpt-image-2 does not support configurable input_fidelity; omit it explicitly.", error_type="invalid_input_fidelity_model", provider=PROVIDER, model=cfg.model, aspect_ratio=aspect)
         if mask_url and not image_url:
             return error_response(error="mask_url requires image_url", error_type="invalid_argument", provider=PROVIDER, model=cfg.model, aspect_ratio=aspect)
 
@@ -156,7 +158,6 @@ class SteroidsOpenAIImageGenProvider(ImageGenProvider):
         except Exception as exc:
             return error_response(error=f"Could not read/save image response: {exc}", error_type="empty_response", provider=PROVIDER, model=cfg.model, prompt=prompt, aspect_ratio=aspect)
 
-        modality = "image" if sources else "text"
         extra = {
             "size": size,
             "quality": selected_quality,
@@ -173,7 +174,7 @@ class SteroidsOpenAIImageGenProvider(ImageGenProvider):
             prompt=prompt,
             aspect_ratio=aspect,
             provider=PROVIDER,
-            modality=modality,
+            modality="image" if sources else "text",
             extra=extra,
         )
 

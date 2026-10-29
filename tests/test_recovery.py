@@ -6,7 +6,7 @@ import pytest
 
 from steroids_openai_image_gen.refs import collect_sources, load_image_bytes
 from steroids_openai_image_gen.config import SteroidsConfig
-from steroids_openai_image_gen.openai_compatible import OpenAICompatibleClient
+from steroids_openai_image_gen.openai_compatible import OpenAICompatibleAPIError, OpenAICompatibleClient
 from tests.test_core import png_bytes, rgba_png_bytes
 
 
@@ -99,5 +99,43 @@ def test_generation_and_edit_payloads_no_response_format_no_retry(tmp_path, monk
         assert 'response_format' not in payload
         assert payload['model'] == 'fixture-image-model'
         assert kw['allow_redirects'] is False
-    assert [k for k, _ in calls[1][1]['files']] == ['image', 'image[]', 'mask']
+    assert [k for k, _ in calls[1][1]['files']] == ['image[]', 'image[]', 'mask']
     assert calls[1][1]['data']['input_fidelity'] == 'high'
+
+
+@pytest.mark.parametrize('fidelity', ['low', 'high'])
+def test_gpt_image_2_fidelity_rejected_locally(monkeypatch, fidelity):
+    from steroids_openai_image_gen import provider as p
+    monkeypatch.setattr(p, 'load_config', lambda: SteroidsConfig(model='gpt-image-2'))
+    monkeypatch.setattr('steroids_openai_image_gen.openai_compatible.requests.post',
+                        lambda *a, **k: pytest.fail('unsupported fidelity reached POST'))
+    monkeypatch.setattr('steroids_openai_image_gen.openai_compatible.load_image_bytes',
+                        lambda *a, **k: pytest.fail('unsupported fidelity read source'))
+    instance = p.SteroidsOpenAIImageGenProvider()
+    assert instance.capabilities()['supports_input_fidelity'] is False
+    for sources in [{}, {'image_url': 'unread.png'}]:
+        result = instance.generate('edit', input_fidelity=fidelity, **sources)
+        assert result['error_type'] == 'invalid_input_fidelity_model'
+        assert 'gpt-image-2' in result['error']
+    with pytest.raises(OpenAICompatibleAPIError) as exc:
+        OpenAICompatibleClient(SteroidsConfig()).edit(
+            prompt='edit', size='1024x1024', quality='low',
+            sources=['unread.png'], input_fidelity=fidelity)
+    assert exc.value.error_code == 'invalid_input_fidelity_model'
+
+
+def test_gpt_image_2_edit_omits_unspecified_fidelity(tmp_path, monkeypatch):
+    source = tmp_path / 'source.png'
+    source.write_bytes(png_bytes())
+    calls = []
+    class Response:
+        status_code = 200
+        def json(self):
+            return {'data': [{'b64_json': 'synthetic'}]}
+    monkeypatch.setattr('steroids_openai_image_gen.openai_compatible.requests.post',
+                        lambda *a, **k: calls.append(k) or Response())
+    OpenAICompatibleClient(SteroidsConfig()).edit(
+        prompt='edit', size='1024x1024', quality='high', sources=[str(source)])
+    assert len(calls) == 1
+    assert 'input_fidelity' not in calls[0]['data']
+    assert [name for name, _ in calls[0]['files']] == ['image']

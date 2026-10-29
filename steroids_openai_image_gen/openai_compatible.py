@@ -62,6 +62,11 @@ class OpenAICompatibleClient:
         mask_url: str | None = None,
         input_fidelity: str | None = None,
     ) -> dict[str, Any]:
+        if input_fidelity is not None and self.config.model == "gpt-image-2":
+            raise OpenAICompatibleAPIError(
+                status_code=400, error_code="invalid_input_fidelity_model",
+                message="gpt-image-2 does not support configurable input_fidelity; omit it explicitly.",
+            )
         files = []
         primary_data = None
         for idx, ref in enumerate(sources):
@@ -72,7 +77,7 @@ class OpenAICompatibleClient:
             )
             if idx == 0:
                 primary_data = image_data
-            field = "image" if idx == 0 else "image[]"
+            field = "image" if len(sources) == 1 else "image[]"
             files.append((field, (name, image_data, mime)))
         if mask_url:
             mask_data, mask_mime, mask_name = load_image_bytes(
