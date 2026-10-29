@@ -36,18 +36,19 @@ class OpenAICompatibleClient:
         return {"Authorization": f"Bearer {self.config.api_key}", "Accept": "application/json"}
 
     def generate(self, *, prompt: str, size: str, quality: str) -> dict[str, Any]:
+        # GPT Image returns base64 without response_format; no paid fallback/retry.
         payload = {
             "model": self.config.model,
             "prompt": prompt,
             "size": size,
             "quality": quality,
-            "response_format": "b64_json",
         }
         response = requests.post(
             f"{self.config.base_url}/images/generations",
             json=payload,
             headers=self._headers(),
             timeout=self.config.timeout_seconds,
+            allow_redirects=False,
         )
         return self._json_or_raise(response)
 
@@ -88,7 +89,6 @@ class OpenAICompatibleClient:
             "prompt": prompt,
             "size": size,
             "quality": quality,
-            "response_format": "b64_json",
         }
         if input_fidelity in {"low", "high"}:
             data["input_fidelity"] = input_fidelity
@@ -98,6 +98,7 @@ class OpenAICompatibleClient:
             files=files,
             headers=self._headers(),
             timeout=self.config.timeout_seconds,
+            allow_redirects=False,
         )
         return self._json_or_raise(response)
 
@@ -107,7 +108,7 @@ class OpenAICompatibleClient:
             payload = response.json()
         except Exception:
             payload = {"raw": response.text[:1000]}
-        if response.status_code >= 400:
+        if response.status_code >= 300:
             err = payload.get("error") if isinstance(payload, dict) else payload
             message = None
             error_code = None

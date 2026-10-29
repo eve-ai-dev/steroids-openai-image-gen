@@ -65,25 +65,7 @@
       "name": "security scan",
       "ok": true,
       "detail": "safe"
-    },
-    {
-      "name": "no core override",
-      "ok": true,
-      "detail": "no runtime rebinds of Hermes core"
     }
   ],
-  "warnings": [
-    "private core imports (catalog rule 9: public surfaces only; these can break on any release): steroids_openai_image_gen/background.py:34 gateway.session_context.get_session_env. Use ctx.* / documented plugin APIs, or open an issue for the seam you need."
-  ],
-  "isolation": {
-    "verdict": "host",
-    "host_ready": true,
-    "reasons": [],
-    "notes": [],
-    "ctx_methods": [
-      "inject_message",
-      "register_image_gen_provider",
-      "register_tool"
-    ]
-  }
+  "warnings": []
 }

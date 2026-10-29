@@ -1,43 +1,43 @@
-# Validation contract
+# Validation contract — current Hermes recovery
 
-Acceptance owner: coordinator/Alberto. Implementation is local only, quality TOP because credentials and asynchronous effects are involved. Required independent review is commissioned by coordinator, not nested here.
+Acceptance owner: parent coordinator/Alberto. Local implementation only. TOP, original immutable baseline and unchanged quality policy required; independent plan and candidate review required. No paid image requests, external messages, active-home discovery, dependency installation or service changes in this validation lane.
 
-## Safe local checks
+## Runtime and isolation
 
-Runtime: existing `/opt/hermes/.venv/bin/python` (3.14). Repo .venv (3.13) cannot import pygments; do not install to bypass prior security denial. `UPSTREAM` below is the read-only admission checkout verified at `2e83e2a935ee04f606aab58e498d34ca58d84c07`; it supplies current public APIs absent from installed Hermes. Do not mutate it. `PYTHONDONTWRITEBYTECODE` prevents shared checkout bytecode writes.
+Use installed `/opt/hermes/.venv/bin/python` (verified Python 3.14.7), installed `/opt/hermes` at upstream revision `e8c97320ac8691d4de92af49f98459f9ef9ddb08`. Do not use a newer checkout as installed-runtime proof. No Hermes upgrade required for the tested plugin/task/session seams. Tests create disposable homes, synthetic secrets and in-memory gateway store/adapter fixtures. An autouse fixture blocks socket connections. Native plugin admission uses its own isolated recording subprocess and is complemented by actual PluginManager/PluginContext registration, registry dispatch, supervised tasks and unload tests.
+
+From repository root:
 
 ```sh
-export UPSTREAM=/opt/data/profiles/builder/cache/scratch/node-search-upstream-slim
 export PYTHONDONTWRITEBYTECODE=1
-export PYTHONPATH=$UPSTREAM:/opt/hermes
-mkdir -p cache
-/opt/hermes/.venv/bin/python -m pytest -q --basetemp=cache/pytest -W error::RuntimeWarning
+export PYTHONPATH=/opt/hermes
+export TMPDIR=../tasks/recover-current-hermes/scratch
+mkdir -p "$TMPDIR"
+/opt/hermes/.venv/bin/python -m pytest -q -W error::RuntimeWarning --basetemp="$TMPDIR/pytest-final"
 /opt/hermes/.venv/bin/python .agents/validate_admission.py
-git diff d77ba961bcf6547d27c8c5cf498f5b5742fcd675 --check
+git diff 115868605716be75c86ee7b438f7e95367590e9f --check
 ```
 
-Expected: tests pass; actual PluginContext registers provider and all three namespaced tools without modifying built-ins; scoped secrets cannot inherit a foreign profile key; real signed-in helper rejects untrusted origin before auth/network; supervised background tasks survive tool return, preserve originating context, distinguish each/batch notification, record refusal, cancel on actual manager unload, and report interrupted jobs after restart.
-Session/lifecycle regressions in tests/test_session_lifecycle.py dispatch registered tools against actual upstream keyed local/messaging policy, refuse cross-session/replaced-id/ownerless reads, reproduce close immediately after loop acquisition, force enqueue and spawn rejection, and overlap admission with concurrent close/unload. Run with `-W error::RuntimeWarning` to reject coroutine leaks. Tests use synthetic session authorities and transports, never a live gateway. The documented session reader triggers an upstream admission allowlist warning; see outputs/session-lifecycle-evidence.md for the primary-source contract, not a suppression or private adapter. Synthetic bytes/results and host test injectors prove these local boundaries, not paid generation or real platform media transport. Old queue-event/parser tests were removed with their private implementation; new boundary tests replace that protection rather than retaining fabricated events.
+Expected: namespaced tools and provider register without builtin replacement; image_gen toolset resolution includes all namespaced tools. Existing Discord toolsets alone do not expose them: parent must add `image_gen`, retaining existing entries. Current gateway scheduler/dispatcher is exercised from `gateway.run_inbound`, with in-memory sources/store and synthetic adapter; no real transport or SessionDB is constructed. Verify missing identity/stateless rejection, frozen key+ID status privacy, explicit durable origin key, same-key replacement ID routing, current authorization/missing-route refusal, each/batch, injection refusal, cancellation/unload, scheduling failures and restart interruption/no automatic retries. Worker context retains scoped home/key. `accepted` means a notification was scheduled, not delivered.
 
-Admission script invokes current upstream `validate_plugin_dir`: manifest/capability parity, no collisions, security scan and no core rebinding. Expected ok; the single documented-session-reader allowlist warning must be reviewed against the cited public contract. It does NOT install dependencies. `--install-deps` is blocked pending changed security-service evidence/approval following prior OSV/deps.dev/ecosyste.ms timeouts; do not repeat equivalent blocked installation.
+Image tests cover generation/edit payloads, refs, alpha masks, quality/fidelity/aspects, structured errors, no response_format, no redirect/retry on image POST, file-read denial before bytes, native URL safety with unsafe metadata URL and redirect rejection, and bounded stream/local/base64 reads. Mock HTTP transports do not prove the remote image protocol or native connect-time DNS enforcement. Legacy signed-in Codex mode must report unavailable on this host: no fabricated `plugin_provider_requests` module or credential-store fallback.
 
 ## Deterministic changed-code quality
 
-External canonical dependency: Builder Assurance 1.1.0, resolved at `/opt/data/profiles/builder/skills/software-development/builder-assurance`; schema vendored at `.agents/quality-policy-v1.schema.json`. Immutable Git baseline is `d77ba961bcf6547d27c8c5cf498f5b5742fcd675`; same policy and Python AST adapter before/after. No JS/TS adapter applies to this Python-only plugin.
+External canonical dependency: Builder Assurance 1.1.0, natively discovered package `/opt/shared-skills/builder-assurance`; scripts resolved under that same canonical package, not copied. Existing vendored schema `.agents/quality-policy-v1.schema.json`, original policy and baseline retained without threshold/adapter/exclusion/exception changes.
 
 ```sh
-/opt/hermes/.venv/bin/python /opt/data/profiles/builder/skills/software-development/builder-assurance/scripts/validate_quality_policy.py .agents/quality.yaml
-/opt/hermes/.venv/bin/python /opt/data/profiles/builder/skills/software-development/builder-assurance/scripts/quality_report.py --repo . --base d77ba961bcf6547d27c8c5cf498f5b5742fcd675 --scope all --level top --config .agents/quality.yaml --output outputs/quality-final.json
+/opt/hermes/.venv/bin/python /opt/shared-skills/builder-assurance/scripts/validate_quality_policy.py .agents/quality.yaml
+/opt/hermes/.venv/bin/python /opt/shared-skills/builder-assurance/scripts/quality_report.py --repo . --base d77ba961bcf6547d27c8c5cf498f5b5742fcd675 --scope all --level top --config .agents/quality.yaml --output outputs/recovery-quality.json
 ```
 
-Expected QUALITY_PASS; untouched or nonworsened strong debt remains visible. No exception authorized. Baseline evidence is outputs/quality-baseline.json. Quality does not establish feature or release acceptance.
+Expected `QUALITY_PASS`, no exception; existing nonworsened debt remains visible. Task starting HEAD is separately `115868605716be75c86ee7b438f7e95367590e9f`. Quality is not endpoint, media or release acceptance.
 
-## Coordinator-owned incomplete gates
+## Still parent-owned / incomplete
 
-- Real text generation and reference/masked edits on an approved endpoint, across aspects and controls; inspect output bytes and backend errors. No paid API calls authorized here.
-- Real Codex supported-route generation/edit/aspect acceptance without vendor impersonation. Auth refresh/network writes not authorized here.
-- Actual target-client media delivery: approve synthetic media to a specified safe session/platform first; observe attachment at that exact target, including failure and cross-session isolation. An injection receipt is insufficient. Then separately approve real generation if required.
-- Dependency install under current Hermes core constraints and approved package-security path; regenerate stale uv.lock only through that path.
-- Independent security/concurrency review of candidate and quality policy; fix blocking findings before publication.
-
-No live runtime restart/config/auth changes, external sends, pushes or catalogue PR creation are performed by Builder. Keep release blocked until these applicable checks have actual evidence.
+- Exact managed Codex upstream/model and image-protocol binding. `/models` advertisement alone is not proof; current advertised image aliases are not accepted for this task. Do not guess a Codex spelling or fall back to `openai/*`.
+- Approved paid generation and reference/masked edit calls, with output-byte/quality/size inspection and no automatic second attempt.
+- Actual target-client media attachment observed at an explicitly approved chat/thread, including refusal. Native scheduling acceptance is insufficient.
+- Activation and five-home config delta, native reload readback, fresh-session tool visibility; see `outputs/parent-installation.md`.
+- Dependency installation and lock regeneration only if separately necessary and authorized through the current package-security path. Existing installed versions satisfy declared ranges; stale historical uv.lock is not install proof.
+- Independent candidate review and parent integrated acceptance before deployment/publication. No push or release authorized here.

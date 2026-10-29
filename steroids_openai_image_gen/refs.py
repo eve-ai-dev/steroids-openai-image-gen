@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Iterable
 from urllib.parse import urlparse
 
-import requests
 
 _ALLOWED_MIME = {"image/png", "image/jpeg", "image/jpg", "image/webp"}
 
@@ -53,7 +52,9 @@ def load_image_bytes(ref: str, *, max_bytes: int, allow_remote: bool = True) -> 
         if ";base64" not in header or not b64:
             raise ValueError("only base64 data: image URLs are supported")
         mime = header[5:].split(";", 1)[0] or "image/png"
-        data = base64.b64decode(b64)
+        if len(b64) > 4 * ((max_bytes + 2) // 3):
+            raise ValueError(f'image exceeds max_image_bytes ({max_bytes})')
+        data = base64.b64decode(b64, validate=True)
         _check_size(data, max_bytes)
         mime = sniff_mime(data, mime)
         if mime not in _ALLOWED_MIME:
@@ -63,23 +64,53 @@ def load_image_bytes(ref: str, *, max_bytes: int, allow_remote: bool = True) -> 
     if lower.startswith(("http://", "https://")):
         if not allow_remote:
             raise ValueError("remote image URLs are disabled by config")
-        response = requests.get(ref, timeout=60)
-        response.raise_for_status()
-        data = response.content
-        _check_size(data, max_bytes)
-        mime = sniff_mime(data, (response.headers.get("content-type") or "image/png").split(";", 1)[0])
+        data, content_type = _download_reference(ref, max_bytes)
+        mime = sniff_mime(data, content_type)
         if mime not in _ALLOWED_MIME:
             raise ValueError(f"unsupported image MIME type: {mime}")
         name = os.path.basename(urlparse(ref).path) or "image.png"
         return data, mime, name
 
+    from agent.file_safety import raise_if_read_blocked
     path = Path(ref).expanduser()
-    data = path.read_bytes()
+    raise_if_read_blocked(str(path))
+    with path.open('rb') as source:
+        data = source.read(max_bytes + 1)
     _check_size(data, max_bytes)
     mime = sniff_mime(data, mimetypes.guess_type(str(path))[0] or "image/png")
     if mime not in _ALLOWED_MIME:
         raise ValueError(f"unsupported image MIME type: {mime}")
     return data, mime, path.name or "image.png"
+
+
+def _check_remote_url(url):
+    from tools.url_safety import is_safe_url
+    from tools.website_policy import check_website_access
+    if not is_safe_url(url):
+        raise ValueError('Image reference URL failed the SSRF safety check')
+    if check_website_access(url):
+        raise ValueError('Image reference URL blocked by website policy')
+
+
+def _download_reference(url, max_bytes):
+    from tools.url_safety import create_ssrf_safe_client, redirect_target_from_response
+    _check_remote_url(url)
+    def check_redirect(response):
+        target = redirect_target_from_response(response)
+        if target:
+            _check_remote_url(target)
+    with create_ssrf_safe_client(timeout=60, follow_redirects=True,
+                                 event_hooks={'response': [check_redirect]}) as client:
+        with client.stream('GET', url) as response:
+            response.raise_for_status()
+            data = bytearray()
+            for chunk in response.iter_bytes(chunk_size=65536):
+                if len(data) + len(chunk) > max_bytes:
+                    raise ValueError(f'image exceeds max_image_bytes ({max_bytes})')
+                data.extend(chunk)
+            _check_size(data, max_bytes)
+            content_type = (response.headers.get('content-type') or 'image/png').split(';', 1)[0]
+            return bytes(data), content_type
 
 
 def load_image_as_data_uri(ref: str, *, max_bytes: int, allow_remote: bool = True) -> str:
@@ -125,4 +156,6 @@ def collect_sources(image_url: str | None, reference_image_urls, *, max_refs: in
     if isinstance(image_url, str) and image_url.strip():
         sources.append(image_url.strip())
     sources.extend(normalize_reference_images(reference_image_urls))
-    return sources[:max_refs]
+    if len(sources) > max_refs:
+        raise ValueError(f'{len(sources)} images exceed max_reference_images ({max_refs}); reduce references')
+    return sources

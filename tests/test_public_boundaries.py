@@ -111,30 +111,18 @@ def test_unload_cancels_without_notification(context, monkeypatch):
         runner.close()
 
 
-def test_codex_public_route_rejects_origin_before_auth():
-    # This is the real public helper, called from this installed plugin's code.
-    # Refused before auth resolution or network activity; no real credential touched.
-    from hermes_cli.plugin_provider_requests import credentialed_provider_request
-    with pytest.raises(PermissionError, match='Refusing to send'):
-        credentialed_provider_request('openai-codex', 'POST', 'https://invalid.example/responses')
-
-
-def test_codex_buffered_sse_preserves_result(monkeypatch):
+def test_legacy_codex_mode_unavailable_without_public_host_seam(monkeypatch):
     from steroids_openai_image_gen.codex_auth import CodexAuthClient
-    from hermes_cli import plugin_provider_requests as public
-    captured = []
-    def request(*args, **kwargs):
-        captured.append((args, kwargs))
-        return SimpleNamespace(status=200, text='data: {"type":"image_generation_call","result":"c3ludGhldGlj"}\n\ndata: [DONE]\n\n')
-    monkeypatch.setattr(public, 'credentialed_provider_request', request)
-    result = CodexAuthClient(SteroidsConfig(mode='codex-auth')).generate(prompt='probe', size='auto', quality='high')
-    assert result['data'][0]['b64_json'] == 'c3ludGhldGlj'
-    assert captured[0][0][0] == 'openai-codex'
-    assert 'Authorization' not in captured[0][1]['headers']
+    from steroids_openai_image_gen import provider as p
+    assert not CodexAuthClient(SteroidsConfig(mode='codex-auth')).available()
+    monkeypatch.setattr(p, 'load_config', lambda: SteroidsConfig(mode='codex-auth'))
+    result = p.SteroidsOpenAIImageGenProvider().generate('synthetic')
+    assert result['error_type'] == 'auth_required'
+    assert 'signed-in provider request support' in result['error']
 
 
 def test_explicit_injection_carries_captured_session_after_return(context, monkeypatch):
-    from gateway.session_context import scoped_session_key
+    from gateway.session_context import set_session_vars, clear_session_vars
     ctx, manager = context
     received = []
     manager.set_gateway_message_injector(object(), lambda **kw: received.append(kw) or True)
@@ -147,16 +135,45 @@ def test_explicit_injection_carries_captured_session_after_return(context, monke
                         lambda: SimpleNamespace(generate=generate))
     runner = BackgroundImageJobRunner(ctx)
     try:
-        with scoped_session_key('synthetic-origin-A'):
-            result = runner.create_jobs({'prompt': 'x'}, OWNER)
-        with scoped_session_key('synthetic-other-B'):
-            release.set()
-            state = wait_for_status(result['jobs'][0]['job_id'], lambda s: s['status']['delivery']['status'] == 'accepted')
+        tokens = set_session_vars(session_key=OWNER.session_key, session_id=OWNER.session_id)
+        result = runner.create_jobs({'prompt': 'x'}, OWNER)
+        clear_session_vars(tokens)
+        tokens = set_session_vars(session_key='synthetic-other-B', session_id='id-B')
+        release.set()
+        state = wait_for_status(result['jobs'][0]['job_id'], lambda s: s['status']['delivery']['status'] == 'accepted')
+        clear_session_vars(tokens)
         assert not received[0].get('keyless')
         assert received[0]['session_key'] == OWNER.session_key
         assert state['status']['delivery']['confirmed'] is False
     finally:
         release.set()
+        runner.close()
+
+
+def test_worker_preserves_profile_home_and_scoped_secret(context, monkeypatch):
+    from hermes_constants import get_hermes_home, set_hermes_home_override, reset_hermes_home_override
+    from agent.secret_scope import get_secret
+    ctx, manager = context
+    observed = []
+    def generate(**kwargs):
+        observed.append((get_hermes_home(), get_secret('OPENAI_API_KEY')))
+        return {'success': True, 'image': '/synthetic.png'}
+    monkeypatch.setattr('steroids_openai_image_gen.background.SteroidsOpenAIImageGenProvider',
+                        lambda: SimpleNamespace(generate=generate))
+    runner = BackgroundImageJobRunner(ctx)
+    home = set_hermes_home_override(manager.home_path)
+    mode = set_multiplex_context(True)
+    secret = set_secret_scope({'OPENAI_API_KEY': 'synthetic-origin-key'}, profile_home=str(manager.home_path))
+    try:
+        result = runner.create_jobs({'prompt': 'x'}, OWNER)
+        reset_secret_scope(secret)
+        secret = set_secret_scope({'OPENAI_API_KEY': 'synthetic-other-key'})
+        wait_for_status(result['jobs'][0]['job_id'], lambda s: s['status']['delivery']['status'] != 'pending')
+        assert observed == [(manager.home_path, 'synthetic-origin-key')]
+    finally:
+        reset_secret_scope(secret)
+        reset_multiplex_context(mode)
+        reset_hermes_home_override(home)
         runner.close()
 
 

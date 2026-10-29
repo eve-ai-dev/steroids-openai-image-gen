@@ -1,5 +1,7 @@
 # Catalogue compatibility 0.2
 
+Historical predecessor, retained for provenance. Superseded for current execution by `../../tasks/recover-current-hermes/task.md` from this directory. Newer-runtime assumptions and old rollback-to-baseline advice below are not activation instructions for the recovery candidate; current behavior and parent rollback are README / outputs/parent-installation.md owned.
+
 Classification: existing project task with minimal governance repair. Authority: complete-target local implementation and coherent local commits only. Coordinator owns independent review, real paid generation/media acceptance and publication. Sole write scope is this repository.
 
 ## Outcome and dependency order

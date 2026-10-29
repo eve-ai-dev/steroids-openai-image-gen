@@ -48,8 +48,9 @@ def rgba_png_bytes(width=2, height=1):
     return b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', width, height, 8, 6, 0, 0, 0)) + chunk(b'IDAT', zlib.compress(raw)) + chunk(b'IEND', b'')
 
 
-def test_collect_sources_caps_primary_plus_refs():
-    assert collect_sources('a', ['b', 'c'], max_refs=2) == ['a', 'b']
+def test_collect_sources_rejects_primary_plus_refs_overflow():
+    with pytest.raises(ValueError, match='max_reference_images'):
+        collect_sources('a', ['b', 'c'], max_refs=2)
 
 
 def test_load_data_uri_roundtrip():

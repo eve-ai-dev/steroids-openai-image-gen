@@ -103,8 +103,9 @@ def _background_handler(runner, args=None, **kwargs) -> str:
     payload = args if isinstance(args, dict) else {}
 
     try:
-        if not runner.ctx.session_surface():
-            raise BackgroundImageJobError('background delivery requires a live calling session')
+        from gateway.session_context import async_delivery_supported
+        if not async_delivery_supported():
+            raise BackgroundImageJobError('background delivery is unavailable on this stateless channel')
         result = runner.create_jobs(payload, calling_owner())
     except BackgroundImageJobError as exc:
         result = {"success": False, "status": "failed", "error": str(exc)}

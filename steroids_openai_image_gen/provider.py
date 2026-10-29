@@ -62,10 +62,8 @@ class SteroidsOpenAIImageGenProvider(ImageGenProvider):
         return False
 
     def list_models(self):
-        return [
-            {"id": "gpt-image-2", "display": "GPT Image 2", "speed": "~15-25s", "strengths": "Generation and edit/reference workflows"},
-            {"id": "openai/gpt-image-2", "display": "OpenAI GPT Image 2", "speed": "~15-25s", "strengths": "Proxy alias"},
-        ]
+        return [{"id": load_config().model, "display": "Configured image endpoint model",
+                 "strengths": "Endpoint protocol and upstream ownership require separate verification"}]
 
     def default_model(self):
         return "gpt-image-2"
@@ -110,7 +108,6 @@ class SteroidsOpenAIImageGenProvider(ImageGenProvider):
         selected_quality = (quality or cfg.quality or "medium").strip().lower()
 
         size = cfg.sizes.get(aspect, cfg.sizes["square"])
-        sources = collect_sources(image_url, reference_image_urls, max_refs=cfg.max_reference_images)
         selected_input_fidelity = input_fidelity.strip().lower() if isinstance(input_fidelity, str) else None
         if selected_input_fidelity not in {None, "low", "high"}:
             return error_response(error="input_fidelity must be low or high", error_type="invalid_argument", provider=PROVIDER, model=cfg.model, aspect_ratio=aspect)
@@ -119,6 +116,7 @@ class SteroidsOpenAIImageGenProvider(ImageGenProvider):
 
 
         try:
+            sources = collect_sources(image_url, reference_image_urls, max_refs=cfg.max_reference_images)
             if cfg.mode == "openai-compatible":
                 client = OpenAICompatibleClient(cfg)
                 if not client.available():

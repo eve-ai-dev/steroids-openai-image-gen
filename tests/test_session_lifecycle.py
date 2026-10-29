@@ -16,36 +16,32 @@ from gateway.session_context import set_session_vars, clear_session_vars
 @pytest.mark.parametrize('mode', ['each', 'batch'])
 def test_registered_tool_uses_real_keyed_policy(context, monkeypatch, platform, mode):
     from gateway.config import Platform
-    from gateway.run_plugin_injection import GatewayPluginInjectionMixin
-    from gateway import plugin_keyless_inject, session_authorities
-    ctx, manager = context
-    source = SimpleNamespace(platform=Platform(platform))
-    live = SimpleNamespace(route=OWNER.session_key, source=source)
-    authority = SimpleNamespace(sessions={'synthetic-chat': live})
-    monkeypatch.setattr(session_authorities, 'authority_for_home', lambda *a: authority)
-    monkeypatch.setattr(session_authorities, 'all_authorities', lambda *a: [authority])
-
-    class RoutingPolicy(GatewayPluginInjectionMixin):
-        session_store = SimpleNamespace(lookup_by_session_key=lambda key: SimpleNamespace(origin=source))
-        config = SimpleNamespace(multiplex_profiles=False)
-        def _restored_source(self, entry):
-            return source
-        def _served_profile_for_home(self, home):
-            return 'synthetic-profile' if home == manager.home_path else None
-
-    policy = RoutingPolicy()
-    # Real replace_source expects a SessionSource, not an SDK/transport object.
+    from gateway.run_inbound import GatewayInboundMixin
     from gateway.session import SessionSource
+    ctx, manager = context
     source = SessionSource(platform=Platform(platform), chat_id='synthetic-chat')
-    live.source = source
+    entry = SimpleNamespace(origin=source, session_id=OWNER.session_id)
     seen = []
+    delivered = threading.Event()
+    async def lookup(key):
+        return entry if key == OWNER.session_key else None
+    async def receive(event):
+        seen.append(event)
+        delivered.set()
+    class RoutingPolicy(GatewayInboundMixin):
+        _running = True
+        async_session_store = SimpleNamespace(lookup_by_session_key=lookup)
+        def _restored_source(self, value):
+            return value.origin
+        def _is_user_authorized_for_source(self, value, **kwargs):
+            return value.chat_id == 'synthetic-chat'
+        def _delivery_adapter_for(self, value):
+            return SimpleNamespace(handle_message=receive)
+    policy = RoutingPolicy()
+    policy._background_tasks = set()
     def inject(**kw):
-        seen.append(kw)
-        if kw.get('keyless'):
-            return plugin_keyless_inject.resolve(policy, plugin_home=kw['plugin_home'],
-                plugin_id=kw['plugin_id'], calling_session_key=kw.get('calling_session_key', '')) is not None
-        return policy._plugin_session_key_admissible(kw['session_key'],
-            plugin_home=kw['plugin_home'], plugin_id=kw['plugin_id'])
+        policy._gateway_loop = asyncio.get_running_loop()
+        return policy._schedule_plugin_message_injection(**kw)
     manager.set_gateway_message_injector(object(), inject)
     monkeypatch.setattr(ctx, '_gateway_injection_allowed', lambda: True)
     monkeypatch.setattr(bg, 'SteroidsOpenAIImageGenProvider', lambda: SimpleNamespace(
@@ -59,7 +55,11 @@ def test_registered_tool_uses_real_keyed_policy(context, monkeypatch, platform, 
         state = wait_for_status(jid, lambda s: s['status']['delivery']['status'] != 'pending')
         assert state['status']['delivery']['status'] == 'accepted'
         assert state['status']['owner'] == {'session_key': OWNER.session_key, 'session_id': OWNER.session_id}
-        assert seen[0]['session_key'] == OWNER.session_key and not seen[0].get('keyless')
+        assert delivered.wait(3)
+        assert seen[0].source.chat_id == 'synthetic-chat'
+        assert seen[0].metadata['gateway_session_key'] == OWNER.session_key
+        assert seen[0].metadata['gateway_session_id'] == OWNER.session_id
+        assert seen[0].metadata['gateway_session_strict'] is True
         allowed = json.loads(ctx.dispatch_tool('steroids_image_generate_background_status', {'job_id': jid}))
         assert allowed['status']['spec']['prompt'] == 'private synthetic prompt'
         clear_session_vars(tokens)

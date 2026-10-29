@@ -22,7 +22,10 @@ class CodexAuthClient:
 
     def available(self) -> bool:
         # Never resolve/refresh auth merely to list the provider.
-        from hermes_cli.plugin_provider_requests import credentialed_provider_request
+        try:
+            from hermes_cli.plugin_provider_requests import credentialed_provider_request
+        except ImportError:
+            return False
         return callable(credentialed_provider_request)
 
     def generate(

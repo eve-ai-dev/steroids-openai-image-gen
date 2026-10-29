@@ -1,6 +1,6 @@
 name: steroids-openai-image-gen
 version: "0.2.0"
-description: "Hermes image generation provider for OpenAI-compatible endpoints and direct Codex Auth, with edit/reference image and quality support."
+description: "Hermes image endpoint provider with edits, references, quality and supervised background jobs."
 author: Alberto + Adan
 kind: backend
 provides_tools:
@@ -8,8 +8,7 @@ provides_tools:
   - steroids_image_generate_background
   - steroids_image_generate_background_status
 provides_hooks: []
-requires_auth: [openai-codex]
 config_schema:
   OPENAI_API_KEY:
     type: secret
-    description: OpenAI-compatible endpoint API key (not needed for codex-auth mode).
+    description: Profile-scoped managed endpoint key; protocol compatibility does not select OpenAI upstream.
